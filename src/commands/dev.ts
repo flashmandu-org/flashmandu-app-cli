@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { createServer } from 'node:net';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -112,11 +112,84 @@ async function isPortInUse(port: number): Promise<boolean> {
   });
 }
 
+async function pathExists(file: string): Promise<boolean> {
+  try {
+    await fs.access(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type AppType = 'node' | 'php';
+
+/**
+ * Detect the app type from the directory contents so the developer never has
+ * to pass --app-command for a standard scaffold:
+ *   - package.json  → node (npm run dev, port via PORT env)
+ *   - composer.json / public/index.php → php (php -S built-in server)
+ */
+async function detectAppType(appDir: string): Promise<AppType | null> {
+  if (await pathExists(path.join(appDir, 'package.json'))) return 'node';
+  if (await pathExists(path.join(appDir, 'composer.json'))) return 'php';
+  if (await pathExists(path.join(appDir, 'public/index.php'))) return 'php';
+  return null;
+}
+
+/** Run a shell command synchronously (for `npm install`), inheriting stdio. */
+function runSync(command: string, cwd: string): Promise<number> {
+  return new Promise((resolve) => {
+    const parts = command.split(/\s+/).filter(Boolean);
+    const cmd = parts[0];
+    if (!cmd) {
+      resolve(1);
+      return;
+    }
+    const opts: SpawnOptions = {
+      cwd,
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    };
+    const child = spawn(cmd, parts.slice(1), opts);
+    child.on('exit', (code) => resolve(code ?? 0));
+  });
+}
+
+/**
+ * Resolve the start command + env for an auto-detected app. The CLI controls
+ * the port for both types (PORT env for node, `-S localhost:port` for php), so
+ * the preflight against --port stays meaningful.
+ */
+async function resolveAutoCommand(
+  appDir: string,
+  port: number,
+): Promise<{ command: string; env: Record<string, string>; type: AppType }> {
+  const type = await detectAppType(appDir);
+  if (type === null) {
+    throw new Error(
+      `Could not auto-detect the app type in ${appDir} ` +
+        `(no package.json, composer.json, or public/index.php). ` +
+        `Pass --app-command "..." to specify how to start your server.`,
+    );
+  }
+  if (type === 'node') {
+    // node dev servers (incl. the shipped `next dev -p ${PORT:-3000}` template)
+    // read PORT, so setting it pins them to --port.
+    return { command: 'npm run dev', env: { PORT: String(port) }, type };
+  }
+  // php — serve the web root (public/ if present, else the app dir).
+  const webroot = (await pathExists(path.join(appDir, 'public'))) ? 'public' : '.';
+  return { command: `php -S localhost:${port} -t ${webroot}`, env: {}, type };
+}
+
 export function makeDevCommand(): Command {
   const cmd = new Command('dev')
     .description('Run the local dev loop: app server + tunnel + dev-box registration. No publish.')
     .option('-p, --port <number>', 'Local app server port', '3000')
-    .option('--app-command <cmd>', 'Command to start your app server', 'npm run dev')
+    .option(
+      '--app-command <cmd>',
+      'Override the app start command (auto-detected from package.json/composer.json if omitted)',
+    )
     .option('--no-app-server', "Don't start the app server (you've started it separately)")
     .option('-d, --dir <path>', 'App directory (default: cwd)', '.')
     .option('--tunnel <provider>', 'Tunnel provider: cloudflared | ngrok')
@@ -130,7 +203,7 @@ export function makeDevCommand(): Command {
     .action(
       async (opts: {
         port: string;
-        appCommand: string;
+        appCommand?: string;
         appServer: boolean;
         dir: string;
         tunnel?: TunnelProvider;
@@ -145,7 +218,7 @@ export function makeDevCommand(): Command {
           throw new Error(`--port must be a positive integer (got "${opts.port}")`);
         }
 
-        let appServer: ReturnType<typeof spawn> | undefined;
+        let appServer: ChildProcess | undefined;
         const spinner = ora();
 
         const cleanup = async (tunnel?: Tunnel): Promise<void> => {
@@ -159,41 +232,86 @@ export function makeDevCommand(): Command {
           if (tunnel) await tunnel.close();
         };
 
-        // 2. Start app server (best-effort; user may start it themselves).
+        // 2. Resolve + start the app server. The start command is auto-detected
+        // from the directory (package.json → node/npm, composer.json or
+        // public/index.php → php built-in server) unless --app-command overrides
+        // it. The CLI pins the port for both auto-detected types (PORT env for
+        // node, -S localhost:port for php), so the preflight against --port is
+        // valid; a user-supplied --app-command owns its own port, so we skip it.
+        const isOverride = typeof opts.appCommand === 'string' && opts.appCommand.length > 0;
+        const resolved = isOverride
+          ? { command: opts.appCommand as string, env: {} as Record<string, string>, type: null as AppType | null }
+          : await resolveAutoCommand(appDir, port);
+        const isManagedServer = !isOverride;
+        let appServerDied = false;
+
         if (opts.appServer) {
-          // Preflight: a stale server on the port (e.g. an earlier `npm run
-          // dev`) would spawn-then-die and the tunnel would silently point at
-          // the WRONG process. Fail fast instead.
-          if (await isPortInUse(port)) {
+          // Auto-install node deps if missing (first run after `app init`).
+          if (resolved.type === 'node' && !(await pathExists(path.join(appDir, 'node_modules')))) {
+            spinner.start('No node_modules found — installing dependencies (npm install)…');
+            const code = await runSync('npm install', appDir);
+            if (code !== 0) {
+              spinner.fail();
+              throw new Error('`npm install` failed. Resolve the errors and re-run.');
+            }
+            spinner.succeed('Dependencies installed.');
+          }
+
+          if (isManagedServer && (await isPortInUse(port))) {
             throw new Error(
-              `Port ${port} is already in use — another server is running there ` +
-                `(a stale \`npm run dev\`?). Stop it first, or pass --no-app-server ` +
-                `to attach to the running one, or --port <other>.`,
+              `Port ${port} is already in use — another server is running there. ` +
+                `Stop it first, pass --no-app-server to attach to it, or use --port <other>.`,
             );
           }
 
-          spinner.start(`Starting app server: ${opts.appCommand}`);
-          const [cmd, ...args] = opts.appCommand.split(/\s+/);
+          const label = resolved.type ? `${resolved.type} app` : 'app';
+          spinner.start(`Starting ${label} server: ${resolved.command}`);
+          const parts = resolved.command.split(/\s+/).filter(Boolean);
+          const cmd = parts[0];
           if (!cmd) {
             spinner.fail();
-            throw new Error('--app-command is empty.');
+            throw new Error('Resolved app command is empty.');
           }
-          appServer = spawn(cmd, args, {
+          const spawnOpts: SpawnOptions = {
             cwd: appDir,
             stdio: 'inherit',
+            env: { ...process.env, ...resolved.env },
             shell: process.platform === 'win32',
-          });
+          };
+          appServer = spawn(cmd, parts.slice(1), spawnOpts);
           appServer.on('exit', (code) => {
+            // Non-zero exit means the server never came up (or crashed). The
+            // tunnel must not be opened against a dead server.
             if (code !== 0 && code !== null) {
+              appServerDied = true;
               console.log(chalk.yellow(`App server exited with code ${code}.`));
             }
           });
           spinner.succeed(`App server started (port ${port}).`);
+          if (!isManagedServer) {
+            console.log(
+              chalk.dim(
+                `  Tunnel will target port ${port}. Ensure your --app-command listens on that port ` +
+                  `(pass --port <n> to change it).`,
+              ),
+            );
+          }
         } else {
           console.log(chalk.dim('Skipping app-server start per --no-app-server.'));
         }
 
         // 3. Start tunnel.
+        // If we spawned the app server and it already died (bad command, wrong
+        // cwd, missing dir like `public/`), do NOT open a tunnel against an
+        // empty port — abort loudly so the user fixes the app command first.
+        if (opts.appServer && appServerDied) {
+          throw new Error(
+            'App server exited before the tunnel could start. Fix the error above ' +
+              '(wrong port? missing directory like `public/`?) and re-run. Hint: pass ' +
+              '`--port <n>` to match the port your --app-command listens on, and run from ' +
+              'your app directory.',
+          );
+        }
         spinner.start('Opening public tunnel…');
         let tunnel: Tunnel;
         try {
@@ -215,10 +333,14 @@ export function makeDevCommand(): Command {
           console.log(chalk.yellow('Tunnel closed unexpectedly. Restart `flashmandu-app dev`.'));
         });
 
-        // 4. Register sandbox with the dev-box.
+        // 4. Register sandbox with the dev-box. Send the developer-chosen
+        // `slug` (leaf); the host namespaces it into the canonical
+        // `<publisher>/<slug>` app id, returned in the response and used for
+        // the secrets file, embed URL, and logs going forward.
+        let canonicalAppId = manifest.id ?? manifest.slug;
         const registerOnce = async (host: string): Promise<DevRegisterResponse> => {
           return registerSandbox({
-            app_id: manifest.id,
+            slug: manifest.slug,
             name: manifest.name,
             version: manifest.version,
             webhook_url: substituteHost(manifest.webhook_url, host),
@@ -236,6 +358,7 @@ export function makeDevCommand(): Command {
           spinner.start('Registering sandbox with dev-box…');
           try {
             const reg = await registerOnce(currentHost);
+            canonicalAppId = reg.app_id;
             spinner.succeed(chalk.green('Sandbox registered.'));
             await printSecretsBanner(reg, currentHost);
 
@@ -243,10 +366,10 @@ export function makeDevCommand(): Command {
             const file = path.join(
               appDir,
               SANDBOX_DIR,
-              `sandbox-secrets.${safeAppSlug(manifest.id)}.json`,
+              `sandbox-secrets.${safeAppSlug(canonicalAppId)}.json`,
             );
             await writeSandboxSecrets(file, {
-              app_id: manifest.id,
+              app_id: canonicalAppId,
               profile_id: reg.profile_id,
               api_token: reg.api_token,
               webhook_secret: reg.webhook_secret,
@@ -272,13 +395,13 @@ export function makeDevCommand(): Command {
 
         // 6. Open the browser at the dev-box page for the freshly-registered
         // app. Default is the embed shell (/apps/{appId}/embed), which frames
-        // the app through its tunnel URL. The app id is substituted RAW — the
-        // host route matches ids containing slashes with a `.+` pattern, and
-        // %2F would 404.
+        // the app through its tunnel URL. The canonical app id (namespaced by
+        // the host) is substituted RAW — the host route matches ids containing
+        // slashes with a `.+` pattern, and %2F would 404.
         if (opts.open) {
           // The dev-box base URL comes from the credential store via apiClient.
           const profile = await getActive();
-          const sandboxUrl = `${profile.base_url.replace(/\/+$/, '')}${opts.sandboxPath.replace('{appId}', manifest.id)}`;
+          const sandboxUrl = `${profile.base_url.replace(/\/+$/, '')}${opts.sandboxPath.replace('{appId}', canonicalAppId)}`;
           console.log(chalk.cyan(`Opening sandbox: ${sandboxUrl}`));
           await openBrowser(sandboxUrl);
         }

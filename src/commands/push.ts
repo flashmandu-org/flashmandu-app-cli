@@ -58,7 +58,7 @@ export function makePushCommand(): Command {
         if (!opts.yes) {
           const { confirm } = await import('@inquirer/prompts');
           const ok = await confirm({
-            message: `Submit "${manifest.name}" (${manifest.id} v${manifest.version}) to the dev-box marketplace?`,
+            message: `Submit "${manifest.name}" (${manifest.slug} v${manifest.version}) to the dev-box marketplace?`,
             default: false,
           });
           if (!ok) {
@@ -74,7 +74,7 @@ export function makePushCommand(): Command {
             {
               developer_name: developerName,
               developer_email: developerEmail,
-              app_id: manifest.id,
+              app_id: manifest.slug,
               name: manifest.name,
               provider_class: manifest.provider_class,
               source_url: sourceUrl,

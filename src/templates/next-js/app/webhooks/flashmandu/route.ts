@@ -1,4 +1,7 @@
 import { NextResponse } from 'next/server';
+import { appendFileSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
+
 import { verifyWebhook, readWebhookHeaders } from '@/lib/hmac';
 import { loadConfig } from '@/lib/config';
 
@@ -61,6 +64,23 @@ export async function POST(req: Request): Promise<Response> {
   console.log(
     `[flashmandu] delivery=${result.deliveryId} event=${parsed.event ?? result.event}`,
   );
+
+  // Append to the on-disk delivery log so the home page can render recent
+  // events (mirrors the PHP template). One JSON object per line.
+  try {
+    const dir = path.join(process.cwd(), '.flashmandu');
+    mkdirSync(dir, { recursive: true });
+    const line = JSON.stringify({
+      at: new Date().toISOString(),
+      event: parsed.event ?? result.event ?? null,
+      delivery_id: result.deliveryId ?? null,
+      payload: parsed.payload ?? null,
+    });
+    appendFileSync(path.join(dir, 'webhooks.log'), `${line}\n`);
+  } catch (logErr) {
+    // Logging is best-effort; never fail the webhook acknowledgement on it.
+    console.warn('[flashmandu] could not append webhook log', logErr);
+  }
 
   return NextResponse.json({ ok: true });
 }

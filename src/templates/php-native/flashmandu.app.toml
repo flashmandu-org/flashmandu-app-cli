@@ -1,4 +1,4 @@
-id = "acme/flashmandu-app"
+slug = "flashmandu-app"
 name = "Acme Flashmandu App"
 version = "0.1.0"
 description = "A Flashmandu app skeleton (PHP, requires flashmandu/app-sdk)."

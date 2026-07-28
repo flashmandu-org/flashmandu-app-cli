@@ -1,0 +1,163 @@
+/**
+ * Global stylesheet for the Flashmandu Next.js app template.
+ *
+ * Imports the App Bridge UI tokens (the --fm-* custom properties that mirror
+ * the host platform's Flux UI look) plus the tiny opt-in component classes
+ * shipped by @flashmandu/app-bridge-ui. Theme + dark-mode overrides propagate
+ * for free because every rule below consumes the --fm-* tokens.
+ */
+@import "@flashmandu/app-bridge-ui/dist/tokens.css";
+@import "@flashmandu/app-bridge-ui/dist/components.css";
+
+html,
+body {
+  background: var(--fm-bg);
+  color: var(--fm-text);
+  font-family: var(--fm-font-sans);
+  font-size: var(--fm-text-base);
+  line-height: var(--fm-leading);
+  -webkit-font-smoothing: antialiased;
+  margin: 0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+code {
+  font-family: var(--fm-font-mono);
+  font-size: 0.85em;
+}
+
+.fm-app-shell {
+  min-height: 100vh;
+  padding: var(--fm-space-6);
+}
+
+.fm-container {
+  max-width: 880px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--fm-space-5);
+}
+
+.fm-app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--fm-space-4);
+  padding-bottom: var(--fm-space-4);
+  border-bottom: 1px solid var(--fm-border);
+}
+
+.fm-app-title {
+  font-size: var(--fm-text-lg);
+  font-weight: 700;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--fm-space-2);
+}
+
+.fm-nav {
+  display: flex;
+  gap: var(--fm-space-2);
+}
+
+.fm-nav a {
+  color: var(--fm-text-muted);
+  text-decoration: none;
+  font-size: var(--fm-text-sm);
+  padding: var(--fm-space-2) var(--fm-space-3);
+  border-radius: var(--fm-radius-md);
+}
+
+.fm-nav a:hover {
+  background: var(--fm-surface-muted);
+  color: var(--fm-text);
+}
+
+.fm-card {
+  background: var(--fm-surface);
+  border: 1px solid var(--fm-border);
+  border-radius: var(--fm-radius);
+  padding: var(--fm-space-5);
+  box-shadow: var(--fm-shadow-sm);
+}
+
+.fm-card h2 {
+  margin: 0 0 var(--fm-space-3);
+  font-size: var(--fm-text-base);
+  font-weight: 600;
+}
+
+.fm-kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--fm-space-2) var(--fm-space-4);
+  font-size: var(--fm-text-sm);
+  margin: 0;
+}
+
+.fm-kv dt {
+  color: var(--fm-text-muted);
+}
+
+.fm-kv dd {
+  margin: 0;
+  font-family: var(--fm-font-mono);
+  word-break: break-all;
+}
+
+.fm-chip {
+  display: inline-block;
+  font-family: var(--fm-font-mono);
+  font-size: var(--fm-text-xs);
+  padding: 2px var(--fm-space-2);
+  border-radius: var(--fm-radius-pill);
+  background: var(--fm-primary-subtle);
+  color: var(--fm-primary);
+  margin: 2px;
+}
+
+.fm-muted {
+  color: var(--fm-text-muted);
+  font-size: var(--fm-text-sm);
+}
+
+.fm-events {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--fm-space-2);
+  max-height: 320px;
+  overflow: auto;
+}
+
+.fm-event {
+  display: grid;
+  grid-template-columns: max-content 1fr max-content;
+  gap: var(--fm-space-3);
+  align-items: baseline;
+  font-size: var(--fm-text-sm);
+  padding: var(--fm-space-2) var(--fm-space-3);
+  background: var(--fm-surface-muted);
+  border-radius: var(--fm-radius-sm);
+}
+
+.fm-event time {
+  color: var(--fm-text-muted);
+  font-family: var(--fm-font-mono);
+}
+
+.fm-event .name {
+  font-weight: 600;
+  font-family: var(--fm-font-mono);
+}
+
+.fm-event code {
+  color: var(--fm-text-muted);
+}

@@ -11,11 +11,15 @@ import { get, post } from './apiClient';
  *
  * `webhook_url` is the public tunnel URL so the dev-box can deliver signed
  * webhooks back to the developer's running app server.
+ *
+ * Identity: the request carries `slug` (the developer-chosen leaf). The host
+ * namespaces it by publisher into the canonical `<publisher>/<slug>` app id,
+ * which is returned in the response as `app_id`.
  */
 
 export interface DevRegisterRequest {
-  /** App id from `flashmandu.app.toml`. */
-  app_id: string;
+  /** Developer-chosen slug (leaf of the canonical `<publisher>/<slug>` id). */
+  slug: string;
   /** Display name from the manifest (required by the dev-box). */
   name: string;
   /** Manifest semver; recorded on the install row. */
@@ -34,6 +38,7 @@ export interface DevRegisterRequest {
 export interface DevRegisterResponse {
   /** Always true on success; present so callers can assert the contract. */
   installed: boolean;
+  /** Canonical `<publisher>/<slug>` app id, as namespaced by the host. */
   app_id: string;
   /** Plaintext api_token. Delivered once; hash stored server-side. */
   api_token: string;

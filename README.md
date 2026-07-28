@@ -55,8 +55,11 @@ flashmandu-app push
 - Sandbox secrets: `<app>/.flashmandu/sandbox-secrets.<app>.json` (0600,
   auto-added to `.gitignore`). Contains `api_token` + `webhook_secret`
   issued once by the dev-box.
-- Manifest: `<app>/flashmandu.app.toml` — id, version, OAuth/webhook URLs,
-  scopes, subscribed events.
+- Manifest: `<app>/flashmandu.app.toml` — slug, version, OAuth/webhook URLs,
+  scopes, subscribed events. The `slug` is the developer-chosen leaf of the
+  platform's `<publisher>/<slug>` app identity; the host namespaces it by
+  publisher. A legacy `id` (e.g. `acme/my-app`) is still accepted as an alias
+  — its leaf after any `/` is used as the slug.
 
 ## Contracts the CLI assumes
 

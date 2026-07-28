@@ -37,46 +37,79 @@ function printRow(row: DeliveryRow): void {
   );
 }
 
-/** Read the app's api_token from the CLI-written sandbox secrets file. */
-async function readSandboxToken(appDir: string, appId: string): Promise<string | undefined> {
-  const file = path.join(
-    appDir,
-    '.flashmandu',
-    `sandbox-secrets.${appId.replace(/[^a-z0-9-]/gi, '-')}.json`,
-  );
+/**
+ * Read the app's api_token from the CLI-written sandbox secrets file. The
+ * filename is keyed by the canonical `<publisher>/<slug>` app_id returned by
+ * the host during `app dev` (slugified to `<publisher>-<slug>`), which logs
+ * cannot know without registering — so we scan `.flashmandu/` for any
+ * `sandbox-secrets.*.json` (there is typically exactly one per app dir) and
+ * also try the manifest's own slug as a fallback.
+ */
+async function readSandboxToken(
+  appDir: string,
+  slug: string,
+): Promise<{ token: string | undefined; appId: string | undefined }> {
+  const dir = path.join(appDir, '.flashmandu');
+  const candidates: string[] = [];
   try {
-    const parsed = JSON.parse(await fs.readFile(file, 'utf8')) as { api_token?: unknown };
-    return typeof parsed.api_token === 'string' && parsed.api_token !== ''
-      ? parsed.api_token
-      : undefined;
+    for (const entry of await fs.readdir(dir)) {
+      if (entry.startsWith('sandbox-secrets.') && entry.endsWith('.json')) {
+        candidates.push(path.join(dir, entry));
+      }
+    }
   } catch {
-    return undefined;
+    /* dir missing — fall through to slug-based path */
   }
+  // Fallback to the leaf-slug filename in case a future writer uses it.
+  candidates.push(path.join(dir, `sandbox-secrets.${slug}.json`));
+
+  for (const file of candidates) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(file, 'utf8')) as {
+        api_token?: unknown;
+        app_id?: unknown;
+      };
+      const token =
+        typeof parsed.api_token === 'string' && parsed.api_token !== ''
+          ? parsed.api_token
+          : undefined;
+      if (token) {
+        return {
+          token,
+          appId: typeof parsed.app_id === 'string' ? parsed.app_id : undefined,
+        };
+      }
+    } catch {
+      /* try next */
+    }
+  }
+  return { token: undefined, appId: undefined };
 }
 
 export function makeLogsCommand(): Command {
   const cmd = new Command('logs')
     .description('Show recent webhook deliveries for this app from the dev-box.')
     .option('-d, --dir <path>', 'App directory', '.')
-    .option('--app-id <id>', 'Override app id (default: from manifest)')
+    .option('--app-slug <slug>', 'Override app slug (default: from manifest)')
+    .option('--app-id <id>', 'Alias of --app-slug for back-compat')
     .option('--tail', 'Poll for new deliveries every 5s until Ctrl+C')
     .option('--interval <seconds>', 'Poll interval for --tail', '5')
     .action(
-      async (opts: { dir: string; appId?: string; tail?: boolean; interval: string }) => {
+      async (opts: { dir: string; appSlug?: string; appId?: string; tail?: boolean; interval: string }) => {
         const appDir = path.resolve(opts.dir);
-        let appId = opts.appId;
-        if (!appId) {
+        let slug = opts.appSlug ?? opts.appId;
+        if (!slug) {
           try {
             const m = await readManifest(appDir);
-            appId = m.id;
+            slug = m.slug;
           } catch {
             throw new Error(
-              'No app id. Either run from an app directory with flashmandu.app.toml or pass --app-id.',
+              'No app slug. Either run from an app directory with flashmandu.app.toml or pass --app-slug.',
             );
           }
         }
 
-        const token = await readSandboxToken(appDir, appId);
+        const { token, appId } = await readSandboxToken(appDir, slug);
         if (!token) {
           console.log(
             chalk.dim(
@@ -102,7 +135,8 @@ export function makeLogsCommand(): Command {
         }
 
         const intervalMs = Math.max(1, Number.parseInt(opts.interval, 10) || 5) * 1000;
-        console.log(chalk.dim(`Tailing deliveries for ${appId} (every ${intervalMs / 1000}s). Ctrl+C to stop.`));
+        const displayId = appId ?? slug;
+        console.log(chalk.dim(`Tailing deliveries for ${displayId} (every ${intervalMs / 1000}s). Ctrl+C to stop.`));
         const seen = new Set<string>();
         // Seed with current.
         try {

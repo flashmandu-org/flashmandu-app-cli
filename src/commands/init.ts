@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import { select, input, confirm } from '@inquirer/prompts';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { serializeManifest, APP_ID_RE, type AppManifest } from '../services/manifest';
+import { serializeManifest, APP_SLUG_RE, type AppManifest } from '../services/manifest';
 
 /**
  * `flashmandu-app init` — scaffold a new app from one of the bundled
@@ -47,7 +47,8 @@ export function makeInitCommand(): Command {
     .description('Scaffold a new Flashmandu app from a template.')
     .argument('[dir]', 'Target directory (default: current directory)', '.')
     .option('--template <name>', 'Template: next-js | php-native')
-    .option('--app-id <id>', 'App id (lowercase kebab-case)')
+    .option('--app-slug <slug>', 'App slug (lowercase alphanumeric + dashes)')
+    .option('--app-id <id>', 'Alias of --app-slug for back-compat (leaf after any "/" is used)')
     .option('--name <name>', 'Display name')
     .option('--base-url <url>', 'Dev-box base URL for the manifest OAuth paths')
     .action(async (dir: string, opts: Partial<Record<string, string>>) => {
@@ -63,20 +64,32 @@ export function makeInitCommand(): Command {
         throw new Error(`Unknown template "${template}". Available: ${Object.keys(TEMPLATES).join(', ')}`);
       }
 
-      const appId =
-        opts.appId ??
-        (await input({
-          message: 'App id (lowercase kebab-case, e.g. acme/loyalty):',
-          validate: (v) => (APP_ID_RE.test(v)
-            ? true
-            : 'Use lowercase kebab-case, 3-80 chars, optional namespace/ prefix.'),
-        }));
+      // Author a clean `slug` leaf (e.g. "my-app"), NOT a namespaced id. The
+      // host derives the canonical `<publisher>/<slug>` identity. --app-id is
+      // accepted for back-compat; its leaf after any "/" is used as the slug.
+      const rawSlug = opts.appSlug ?? opts.appId;
+      const normalizeSlug = (v: string): string =>
+        v.includes('/') ? (v.split('/').pop() ?? v) : v;
+      const appSlug =
+        rawSlug
+          ? normalizeSlug(rawSlug)
+          : await input({
+              message: 'App slug (lowercase alphanumeric + dashes, e.g. my-app):',
+              validate: (v) => (APP_SLUG_RE.test(v)
+                ? true
+                : 'Use lowercase alphanumeric + dashes (1-96 chars). No namespace prefix.'),
+            });
+      if (!APP_SLUG_RE.test(appSlug)) {
+        throw new Error(
+          `Invalid app slug "${appSlug}". Use lowercase alphanumeric + dashes (1-96 chars).`,
+        );
+      }
 
       const appName =
         opts.name ??
         (await input({
           message: 'Display name:',
-          default: appId,
+          default: appSlug,
         }));
 
       const target = path.resolve(dir);
@@ -127,7 +140,7 @@ export function makeInitCommand(): Command {
       // base so the developer can grep-and-replace; `app dev` overrides them
       // at runtime with the live tunnel URL.
       const manifest: AppManifest = {
-        id: appId,
+        slug: appSlug,
         name: appName,
         version: '0.1.0',
         authorize_url: 'https://APP-HOST/oauth/authorize',
