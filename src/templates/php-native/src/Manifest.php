@@ -18,9 +18,9 @@ use Flashmandu\AppSdk\Scope;
  */
 final class Manifest implements AppProvider
 {
-    public const string AUTHORIZE_URL = 'https://APP-HOST/oauth/authorize';
-    public const string TOKEN_URL = 'https://APP-HOST/oauth/token';
-    public const string WEBHOOK_URL = 'https://APP-HOST/webhooks/flashmandu';
+    public const AUTHORIZE_URL = 'https://APP-HOST/oauth/authorize';
+    public const TOKEN_URL = 'https://APP-HOST/oauth/token';
+    public const WEBHOOK_URL = 'https://APP-HOST/webhooks/flashmandu';
 
     public function manifest(): AppManifest
     {

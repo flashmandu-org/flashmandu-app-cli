@@ -27,7 +27,7 @@ export function makeConfigCommand(): Command {
 
   cmd
     .command('set <key> <value>')
-    .description('Set a config value. Supported keys: base_url.')
+    .description('Set a config value. Supported keys: base_url (the platform/dev-box host, NOT your app URL).')
     .action(async (key: string, value: string) => {
       if (key !== 'base_url') {
         throw new Error(
@@ -48,7 +48,8 @@ export function makeConfigCommand(): Command {
       }
       const entry = await getActive();
       await setProfile(active, { ...entry, base_url: normalized });
-      console.log(chalk.green(`✓ base_url for profile "${active}" set to ${normalized}`));
+      console.log(chalk.green(`✓ Platform base_url for profile "${active}" set to ${normalized}`));
+      console.log(chalk.dim('  This is the Flashmandu host the CLI talks to — your app’s public URL comes from the `dev` tunnel, not this setting.'));
     });
 
   cmd

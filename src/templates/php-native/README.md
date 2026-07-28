@@ -1,30 +1,40 @@
 # Acme Flashmandu App (PHP)
 
-A composer-package skeleton for a Flashmandu storefront app requiring
-`flashmandu/app-sdk`.
+A framework-free PHP skeleton for a Flashmandu **remote app**. No framework, no
+composer install needed for the dev loop — just PHP 8.2+.
 
 ## Layout
 
-- `src/Manifest.php` — `AppProvider` implementation. Register this class in the
-  platform's `config/apps.php`, or submit via `flashmandu-app push`.
-- `src/WebhookVerifier.php` — framework-free HMAC verifier for inbound
-  webhooks. Feed it `php://input` and the request headers.
-- `src/InstallMigration.stub.php` — copy into your migrations directory for
-  any app-local install state.
+- `public/index.php` — a runnable dev server implementing the full remote-app
+  contract: the identity homepage, the OAuth PKCE endpoints
+  (`/oauth/authorize`, `/oauth/callback`, `/oauth/token`), and the HMAC-verified
+  webhook receiver (`/webhooks/flashmandu`).
+- `src/WebhookVerifier.php` — the HMAC verifier, written to be dropped into any
+  Laravel/Symfony/raw-PHP app. Feed it `php://input` and the request headers.
+- `src/Manifest.php` — `AppProvider` implementation for **in-process** installs
+  (Track A: a composer package inside the platform). Requires
+  `flashmandu/app-sdk` (`composer install`). Not needed for the remote dev loop.
+- `src/InstallMigration.stub.php` — copy into your migrations directory for any
+  app-local install state.
 
-## Local dev
+## Dev loop
 
 ```bash
-composer install
-composer test
-flashmandu-app dev
+flashmandu-app dev --app-command "php -S localhost:3000 -t public"
 ```
 
-`flashmandu-app dev` writes the dev-box sandbox credentials into
-`.flashmandu/sandbox-secrets.<app>.json` (0600, gitignored). Read them at
-runtime (do NOT hardcode):
+The CLI starts this server, opens a public tunnel, registers the app on the
+dev-box, and writes `.flashmandu/sandbox-secrets.<app>.json` (0600, gitignored).
+The server reads that file automatically — open http://localhost:3000 to see
+your app's identity as the platform sees it.
 
-```php
-$secrets = json_decode(file_get_contents(__DIR__.'/../.flashmandu/sandbox-secrets.acme-flashmandu-app.json'), true);
-$verifier = new WebhookVerifier($secrets['webhook_secret']);
-```
+Received webhooks are verified and appended to `.flashmandu/webhooks.log`.
+Credentials delivered by the platform at install are persisted to
+`.flashmandu/credentials.json`.
+
+## Moving to production
+
+Mount the four endpoints from `public/index.php` in your real app (Laravel,
+Symfony, Slim — anything), keep the `WebhookVerifier`, store the install-time
+`api_token` / `webhook_secret` in your own secret store, and submit with
+`flashmandu-app push`.

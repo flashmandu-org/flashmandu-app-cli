@@ -1,6 +1,6 @@
 {
   "name": "@flashmandu/app-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Developer CLI for building, testing and publishing Flashmandu storefront apps. Shopify-CLI-equivalent dev tool.",
   "license": "proprietary",
   "author": "Flashmandu <engineering@flashmandu.com>",

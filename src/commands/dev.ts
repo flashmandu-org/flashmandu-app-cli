@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { readManifest } from '../services/manifest';
@@ -25,8 +26,8 @@ import { getActive } from '../services/credentials';
  *   5. Write secrets to `.flashmandu/sandbox-secrets.<app>.json` (0600,
  *      gitignored) so the developer's app server can read them via
  *      FLASHMANDU_API_TOKEN / FLASHMANDU_WEBHOOK_SECRET.
- *   6. Open the sandbox URL in the browser (the dev-box merchant install
- *      entrypoint).
+ *   6. Open the app in the browser via the dev-box embed shell
+ *      (/apps/{appId}/embed), which frames the app through its tunnel URL.
  *   7. Watch the tunnel URL — if it changes (provider reconnect), re-register.
  *
  * The CLI never writes secrets to disk anywhere except the per-app sandbox
@@ -37,10 +38,11 @@ const SANDBOX_DIR = '.flashmandu';
 
 interface SandboxSecrets {
   app_id: string;
-  install_id: number | string;
+  profile_id: number;
   api_token: string;
   webhook_secret: string;
   webhook_url: string;
+  dev_box_base_url: string;
   scopes: string[];
   issued_at: string;
 }
@@ -98,6 +100,18 @@ function safeAppSlug(id: string): string {
   return id.replace(/[^a-z0-9-]/gi, '-');
 }
 
+/** True if something is already listening on the port (e.g. a stale dev server). */
+async function isPortInUse(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = createServer();
+    probe.once('error', () => resolve(true));
+    probe.once('listening', () => {
+      probe.close(() => resolve(false));
+    });
+    probe.listen(port);
+  });
+}
+
 export function makeDevCommand(): Command {
   const cmd = new Command('dev')
     .description('Run the local dev loop: app server + tunnel + dev-box registration. No publish.')
@@ -110,8 +124,8 @@ export function makeDevCommand(): Command {
     .option('--no-open', 'Do not open the sandbox browser automatically')
     .option(
       '--sandbox-path <path>',
-      'Dev-box sandbox install URL path',
-      '/apps/sandbox/install',
+      'Dev-box URL path to open after registration; {appId} is substituted',
+      '/apps/{appId}/embed',
     )
     .action(
       async (opts: {
@@ -147,6 +161,17 @@ export function makeDevCommand(): Command {
 
         // 2. Start app server (best-effort; user may start it themselves).
         if (opts.appServer) {
+          // Preflight: a stale server on the port (e.g. an earlier `npm run
+          // dev`) would spawn-then-die and the tunnel would silently point at
+          // the WRONG process. Fail fast instead.
+          if (await isPortInUse(port)) {
+            throw new Error(
+              `Port ${port} is already in use — another server is running there ` +
+                `(a stale \`npm run dev\`?). Stop it first, or pass --no-app-server ` +
+                `to attach to the running one, or --port <other>.`,
+            );
+          }
+
           spinner.start(`Starting app server: ${opts.appCommand}`);
           const [cmd, ...args] = opts.appCommand.split(/\s+/);
           if (!cmd) {
@@ -194,6 +219,8 @@ export function makeDevCommand(): Command {
         const registerOnce = async (host: string): Promise<DevRegisterResponse> => {
           return registerSandbox({
             app_id: manifest.id,
+            name: manifest.name,
+            version: manifest.version,
             webhook_url: substituteHost(manifest.webhook_url, host),
             authorize_url: substituteHost(manifest.authorize_url, host),
             token_url: substituteHost(manifest.token_url, host),
@@ -212,6 +239,7 @@ export function makeDevCommand(): Command {
             spinner.succeed(chalk.green('Sandbox registered.'));
             await printSecretsBanner(reg, currentHost);
 
+            const profile = await getActive();
             const file = path.join(
               appDir,
               SANDBOX_DIR,
@@ -219,11 +247,12 @@ export function makeDevCommand(): Command {
             );
             await writeSandboxSecrets(file, {
               app_id: manifest.id,
-              install_id: reg.install_id,
+              profile_id: reg.profile_id,
               api_token: reg.api_token,
               webhook_secret: reg.webhook_secret,
               webhook_url: substituteHost(manifest.webhook_url, currentHost),
-              scopes: reg.scopes,
+              dev_box_base_url: profile.base_url,
+              scopes: manifest.scopes,
               issued_at: new Date().toISOString(),
             });
             console.log(chalk.dim(`  Secrets written to ${file} (0600, gitignored).`));
@@ -241,11 +270,15 @@ export function makeDevCommand(): Command {
 
         await doRegister();
 
-        // 6. Open the browser at the dev-box sandbox install entrypoint.
+        // 6. Open the browser at the dev-box page for the freshly-registered
+        // app. Default is the embed shell (/apps/{appId}/embed), which frames
+        // the app through its tunnel URL. The app id is substituted RAW — the
+        // host route matches ids containing slashes with a `.+` pattern, and
+        // %2F would 404.
         if (opts.open) {
           // The dev-box base URL comes from the credential store via apiClient.
           const profile = await getActive();
-          const sandboxUrl = `${profile.base_url.replace(/\/+$/, '')}${opts.sandboxPath}/${encodeURIComponent(manifest.id)}`;
+          const sandboxUrl = `${profile.base_url.replace(/\/+$/, '')}${opts.sandboxPath.replace('{appId}', manifest.id)}`;
           console.log(chalk.cyan(`Opening sandbox: ${sandboxUrl}`));
           await openBrowser(sandboxUrl);
         }
@@ -278,7 +311,8 @@ export function makeDevCommand(): Command {
 }
 
 async function printSecretsBanner(reg: DevRegisterResponse, host: string): Promise<void> {
-  console.log(chalk.green(`  install_id: ${reg.install_id}`));
+  console.log(chalk.green(`  app_id: ${reg.app_id}`));
+  console.log(chalk.green(`  profile_id: ${reg.profile_id}`));
   console.log(chalk.green(`  webhook_url: ${host}`));
   console.log(chalk.dim('  api_token: [hidden — written to .flashmandu/]'));
   console.log(chalk.dim('  webhook_secret: [hidden — written to .flashmandu/]'));

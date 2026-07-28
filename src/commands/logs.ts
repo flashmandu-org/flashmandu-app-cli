@@ -1,32 +1,56 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { readManifest } from '../services/manifest';
 import { listDeliveries, type DeliveryRow } from '../services/devRegistrar';
 
 /**
  * `flashmandu-app logs` — show recent webhook deliveries the dev-box attempted
- * against this app's sandbox. Reads `GET /api/apps/dev/{appId}/deliveries`.
+ * against this app's sandbox. Reads `GET /api/apps/dev/deliveries`, which
+ * derives the app identity from the bearer token.
+ *
+ * The developer login token resolves to the `dev/cli` app — not YOUR app — so
+ * this command authenticates with the app's own api_token from
+ * `.flashmandu/sandbox-secrets.<app>.json` (written by `flashmandu-app dev`)
+ * whenever it exists, falling back to the login token otherwise.
  *
  * With `--tail`, polls the endpoint every few seconds and prints new rows.
- * (Server-Sent Events support can be added later if the dev-box exposes a
- * stream; for now we poll — the dev-box is the only host.)
  */
 
 function colourStatus(row: DeliveryRow): string {
+  if (row.http_status === null) return chalk.yellow('-');
   if (row.succeeded) return chalk.green(String(row.http_status));
   if (row.http_status >= 500) return chalk.magenta(String(row.http_status));
   if (row.http_status >= 400) return chalk.red(String(row.http_status));
   return chalk.yellow(String(row.http_status));
 }
 
+function rowKey(row: DeliveryRow): string {
+  return row.delivery_id ?? `${row.created_at ?? ''}:${row.event}`;
+}
+
 function printRow(row: DeliveryRow): void {
   const ts = row.created_at ?? '';
   console.log(
-    `${chalk.dim(ts)}  ${colourStatus(row)}  ${chalk.cyan(row.event)}  ${row.delivery_id}`,
+    `${chalk.dim(ts)}  ${colourStatus(row)}  ${chalk.cyan(row.event)}  ${row.delivery_id ?? ''}`,
   );
-  if (row.response) {
-    console.log(chalk.dim(`    ${row.response.slice(0, 200)}`));
+}
+
+/** Read the app's api_token from the CLI-written sandbox secrets file. */
+async function readSandboxToken(appDir: string, appId: string): Promise<string | undefined> {
+  const file = path.join(
+    appDir,
+    '.flashmandu',
+    `sandbox-secrets.${appId.replace(/[^a-z0-9-]/gi, '-')}.json`,
+  );
+  try {
+    const parsed = JSON.parse(await fs.readFile(file, 'utf8')) as { api_token?: unknown };
+    return typeof parsed.api_token === 'string' && parsed.api_token !== ''
+      ? parsed.api_token
+      : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -39,10 +63,11 @@ export function makeLogsCommand(): Command {
     .option('--interval <seconds>', 'Poll interval for --tail', '5')
     .action(
       async (opts: { dir: string; appId?: string; tail?: boolean; interval: string }) => {
+        const appDir = path.resolve(opts.dir);
         let appId = opts.appId;
         if (!appId) {
           try {
-            const m = await readManifest(path.resolve(opts.dir));
+            const m = await readManifest(appDir);
             appId = m.id;
           } catch {
             throw new Error(
@@ -51,24 +76,38 @@ export function makeLogsCommand(): Command {
           }
         }
 
+        const token = await readSandboxToken(appDir, appId);
+        if (!token) {
+          console.log(
+            chalk.dim(
+              'No .flashmandu/sandbox-secrets file found — falling back to the login token. ' +
+                'Run `flashmandu-app dev` first for per-app delivery history.',
+            ),
+          );
+        }
+
+        const fetchRows = async (): Promise<DeliveryRow[]> => {
+          const { deliveries } = await listDeliveries(token);
+          return deliveries ?? [];
+        };
+
         if (!opts.tail) {
-          const { data } = await listDeliveries(appId);
-          if (!data || data.length === 0) {
+          const rows = await fetchRows();
+          if (rows.length === 0) {
             console.log(chalk.yellow('No deliveries yet.'));
             return;
           }
-          for (const row of data) printRow(row);
+          for (const row of rows) printRow(row);
           return;
         }
 
         const intervalMs = Math.max(1, Number.parseInt(opts.interval, 10) || 5) * 1000;
         console.log(chalk.dim(`Tailing deliveries for ${appId} (every ${intervalMs / 1000}s). Ctrl+C to stop.`));
-        let seen = new Set<string>();
+        const seen = new Set<string>();
         // Seed with current.
         try {
-          const { data } = await listDeliveries(appId);
-          for (const row of data ?? []) {
-            seen.add(row.delivery_id);
+          for (const row of await fetchRows()) {
+            seen.add(rowKey(row));
             printRow(row);
           }
         } catch (err) {
@@ -77,10 +116,10 @@ export function makeLogsCommand(): Command {
 
         const tick = async (): Promise<void> => {
           try {
-            const { data } = await listDeliveries(appId!);
-            for (const row of data ?? []) {
-              if (!seen.has(row.delivery_id)) {
-                seen.add(row.delivery_id);
+            for (const row of await fetchRows()) {
+              const key = rowKey(row);
+              if (!seen.has(key)) {
+                seen.add(key);
                 printRow(row);
               }
             }

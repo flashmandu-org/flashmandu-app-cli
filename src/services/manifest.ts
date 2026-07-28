@@ -15,7 +15,14 @@ import { z } from 'zod';
  */
 
 const SCOPE_RE = /^[A-Z][A-Za-z0-9]*$/;
-const APP_ID_RE = /^[a-z0-9][a-z0-9-]{1,78}[a-z0-9]$/;
+
+/**
+ * App ids are kebab-case, optionally namespaced with a single slash
+ * (`acme/loyalty`, `dev/cli`) — matching the host's remote-app id format.
+ * Shared with the `init` prompt so scaffold-time and dev-time validation
+ * can never disagree.
+ */
+export const APP_ID_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9](\/[a-z0-9][a-z0-9-]{1,38}[a-z0-9])?$/;
 
 export const ManifestSchema = z.object({
   id: z

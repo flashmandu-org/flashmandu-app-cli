@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import { select, input, confirm } from '@inquirer/prompts';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { serializeManifest, type AppManifest } from '../services/manifest';
+import { serializeManifest, APP_ID_RE, type AppManifest } from '../services/manifest';
 
 /**
  * `flashmandu-app init` — scaffold a new app from one of the bundled
@@ -67,9 +67,9 @@ export function makeInitCommand(): Command {
         opts.appId ??
         (await input({
           message: 'App id (lowercase kebab-case, e.g. acme/loyalty):',
-          validate: (v) => (/^[a-z0-9][a-z0-9-/]{1,78}[a-z0-9]$/.test(v)
+          validate: (v) => (APP_ID_RE.test(v)
             ? true
-            : 'Use lowercase kebab-case, 3-80 chars.'),
+            : 'Use lowercase kebab-case, 3-80 chars, optional namespace/ prefix.'),
         }));
 
       const appName =

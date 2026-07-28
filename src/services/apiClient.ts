@@ -87,14 +87,22 @@ export async function request<T = unknown>(
   options: RequestOptions = {},
 ): Promise<T> {
   let profile: ProfileEntry | undefined;
-  if (!options.noAuth || options.token) {
+  try {
     profile = await getActive();
+  } catch (err) {
+    // The stored profile is required only when it must supply the bearer
+    // token. Explicit-token and no-auth calls may still use it as a base_url
+    // fallback, but must not hard-fail when none exists (e.g. during login).
+    if (!options.noAuth && !options.token) {
+      throw err;
+    }
   }
 
   const base = options.baseUrl ?? process.env.FLASHMANDU_BASE_URL_OVERRIDE ?? profile?.base_url;
   if (!base) {
     throw new Error(
-      'No base URL configured. Run `flashmandu-app config set base_url <https://your-dev-box>` first.',
+      'No platform base URL configured. Run `flashmandu-app config set base_url <https://your-dev-box>` — ' +
+        'this is the Flashmandu host the CLI talks to, not your app’s URL.',
     );
   }
 

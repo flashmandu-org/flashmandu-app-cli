@@ -1,4 +1,4 @@
-import { type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { type ChildProcess } from 'node:child_process';
 
 /**
  * Tunnel provider resolver. `app dev` exposes the developer's local app server
@@ -35,7 +35,7 @@ export interface TunnelOptions {
   externalUrl?: string;
 }
 
-function closeProc(proc: ChildProcessWithoutNullStreams): Promise<void> {
+function closeProc(proc: ChildProcess): Promise<void> {
   return new Promise((resolve) => {
     proc.once('exit', () => resolve());
     proc.kill('SIGTERM');
@@ -63,12 +63,18 @@ async function startCloudflared(port: number): Promise<Tunnel> {
   }
 
   const cf = mod as {
-    quickTunnel: (opts: { port: number }) => Promise<{ url: string; child: ChildProcessWithoutNullStreams }>;
+    tunnel: (opts?: Record<string, string | number | null>) => {
+      url: Promise<string>;
+      child: ChildProcess;
+    };
   };
-  const started = await cf.quickTunnel({ port });
+  // A quick tunnel needs no account or token — just point cloudflared at the
+  // local app server.
+  const started = cf.tunnel({ '--url': `http://localhost:${port}` });
+  const url = await started.url;
 
   return {
-    url: normaliseUrl(started.url),
+    url: normaliseUrl(url),
     async close() {
       await closeProc(started.child);
     },
