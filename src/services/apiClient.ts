@@ -109,7 +109,7 @@ export async function request<T = unknown>(
     headers.Authorization = `Bearer ${token}`;
   }
 
-  let body: BodyInit | undefined;
+  let body: string | undefined;
   if (options.body !== undefined) {
     headers['Content-Type'] = 'application/json';
     body = JSON.stringify(options.body);

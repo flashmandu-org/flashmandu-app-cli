@@ -19,6 +19,9 @@
     "developer-tools"
   ],
   "type": "commonjs",
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "dist/index.js",
   "bin": {
     "flashmandu-app": "dist/index.js"

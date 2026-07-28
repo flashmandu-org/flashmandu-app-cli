@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { type ChildProcessWithoutNullStreams } from 'node:child_process';
 
 /**
  * Tunnel provider resolver. `app dev` exposes the developer's local app server
