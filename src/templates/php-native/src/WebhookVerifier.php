@@ -1,0 +1,60 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Acme\FlashmanduApp;
+
+/**
+ * Verifies the Flashmandu platform webhook signature.
+ *
+ *   signature = hash_hmac('sha256', $timestamp.'.'.$body, $webhook_secret)
+ *
+ * Sent in:
+ *   X-App-Signature, X-App-Timestamp, X-App-Delivery (UUID), X-App-Event.
+ *
+ * This is a framework-free reference; drop it into your Laravel/Symfony/raw-PHP
+ * controller and feed it php://input verbatim.
+ */
+final class WebhookVerifier
+{
+    public function __construct(
+        private readonly string $webhookSecret,
+        private readonly int $maxSkewSeconds = 300,
+    ) {}
+
+    /**
+     * @return array{ok: bool, reason?: string, event?: string, delivery_id?: string}
+     */
+    public function verify(string $rawBody, array $headers): array
+    {
+        $sig = $headers['X-App-Signature'] ?? null;
+        $ts = $headers['X-App-Timestamp'] ?? null;
+        $delivery = $headers['X-App-Delivery'] ?? null;
+        $event = $headers['X-App-Event'] ?? null;
+
+        if (!is_string($sig) || !is_string($ts)) {
+            return ['ok' => false, 'reason' => 'missing signature or timestamp'];
+        }
+
+        $tsInt = (int) $ts;
+        if ($tsInt <= 0) {
+            return ['ok' => false, 'reason' => 'invalid X-App-Timestamp'];
+        }
+
+        $age = abs(time() - $tsInt);
+        if ($age > $this->maxSkewSeconds) {
+            return ['ok' => false, 'reason' => "timestamp skew {$age}s > {$this->maxSkewSeconds}s"];
+        }
+
+        $expected = hash_hmac('sha256', $ts.'.'.$rawBody, $this->webhookSecret);
+        if (!hash_equals($expected, $sig)) {
+            return ['ok' => false, 'reason' => 'signature mismatch'];
+        }
+
+        return [
+            'ok' => true,
+            'event' => is_string($event) ? $event : null,
+            'delivery_id' => is_string($delivery) ? $delivery : null,
+        ];
+    }
+}

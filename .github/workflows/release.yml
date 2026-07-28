@@ -1,0 +1,50 @@
+name: Release
+
+# Tag-driven release. On a `vX.Y.Z` tag (pushed by bin/release.sh):
+#   - install, typecheck, build (tsc)
+#   - publish @flashmandu/app-cli to npm
+#   - create the GitHub release with generated notes
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify bundled templates are present
+        run: |
+          test -f dist/index.js
+          test -d src/templates/next-js
+          test -d src/templates/php-native
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag

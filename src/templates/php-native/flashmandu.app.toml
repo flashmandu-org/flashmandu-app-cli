@@ -1,0 +1,17 @@
+id = "acme/flashmandu-app"
+name = "Acme Flashmandu App"
+version = "0.1.0"
+description = "A Flashmandu app skeleton (PHP, requires flashmandu/app-sdk)."
+
+# Replace APP-HOST with your tunnel URL when running `flashmandu-app dev`.
+authorize_url = "https://APP-HOST/oauth/authorize"
+token_url = "https://APP-HOST/oauth/token"
+webhook_url = "https://APP-HOST/webhooks/flashmandu"
+
+scopes = ["ReadOrders"]
+subscribed_events = ["order.status.changed"]
+
+developer_name = "Your Name"
+developer_email = "you@example.com"
+source_url = "https://github.com/your-org/flashmandu-app"
+provider_class = "Acme\\FlashmanduApp\\Manifest"

@@ -1,0 +1,136 @@
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+
+/**
+ * Tunnel provider resolver. `app dev` exposes the developer's local app server
+ * to the public internet so the dev-box can reach its webhook_url and OAuth
+ * endpoints.
+ *
+ * Strategy (in order):
+ *   1. cloudflared quick tunnel (no account, no token) — default.
+ *   2. ngrok free tier — fallback.
+ *   3. A developer-supplied `--tunnel-url` for bring-your-own (e.g. tailscale
+ *      serve, a static domain). Skips spawning entirely.
+ *
+ * Each provider is `require()`d lazily so the CLI works even if neither
+ * optional dependency is installed; the user gets a clear error pointing at
+ * the missing tool.
+ */
+
+export interface Tunnel {
+  /** Public https URL the dev-box can reach. */
+  url: string;
+  /** Stop the tunnel process (no-op for bring-your-own). */
+  close(): Promise<void>;
+  /** Resolves when the underlying process exits unexpectedly. */
+  onClose(cb: () => void): void;
+}
+
+export type TunnelProvider = 'cloudflared' | 'ngrok' | 'external';
+
+export interface TunnelOptions {
+  provider?: TunnelProvider;
+  /** Local port the developer's app server is listening on. */
+  port: number;
+  /** Skip spawning; use this exact public URL. */
+  externalUrl?: string;
+}
+
+function closeProc(proc: ChildProcessWithoutNullStreams): Promise<void> {
+  return new Promise((resolve) => {
+    proc.once('exit', () => resolve());
+    proc.kill('SIGTERM');
+    setTimeout(() => {
+      try {
+        proc.kill('SIGKILL');
+      } catch {
+        /* already dead */
+      }
+      resolve();
+    }, 3000);
+  });
+}
+
+/** Start a cloudflared quick tunnel pointing at `localhost:port`. */
+async function startCloudflared(port: number): Promise<Tunnel> {
+  let mod: unknown;
+  try {
+    mod = require('cloudflared');
+  } catch {
+    throw new Error(
+      'cloudflared is not installed. Install it with `npm install -D cloudflared`, ' +
+        'use `--tunnel-url <https-url>`, or pick ngrok with `--tunnel ngrok`.',
+    );
+  }
+
+  const cf = mod as {
+    quickTunnel: (opts: { port: number }) => Promise<{ url: string; child: ChildProcessWithoutNullStreams }>;
+  };
+  const started = await cf.quickTunnel({ port });
+
+  return {
+    url: normaliseUrl(started.url),
+    async close() {
+      await closeProc(started.child);
+    },
+    onClose(cb) {
+      started.child.once('exit', cb);
+    },
+  };
+}
+
+/** Start an ngrok tunnel pointing at `localhost:port`. */
+async function startNgrok(port: number): Promise<Tunnel> {
+  let mod: unknown;
+  try {
+    mod = require('ngrok');
+  } catch {
+    throw new Error(
+      'ngrok is not installed. Install it with `npm install -D ngrok`, ' +
+        'use `--tunnel-url <https-url>`, or pick cloudflared with `--tunnel cloudflared`.',
+    );
+  }
+
+  const ngrok = mod as {
+    connect: (opts: { addr: number; proto: 'http' }) => Promise<string>;
+    disconnect: () => Promise<void>;
+  };
+  const url = await ngrok.connect({ addr: port, proto: 'http' });
+
+  return {
+    url: normaliseUrl(url),
+    async close() {
+      await ngrok.disconnect();
+    },
+    onClose() {
+      /* ngrok manages its own process; no child exit to observe. */
+    },
+  };
+}
+
+function normaliseUrl(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
+/** Resolve and start a tunnel per the options. */
+export async function startTunnel(opts: TunnelOptions): Promise<Tunnel> {
+  if (opts.externalUrl) {
+    const url = normaliseUrl(opts.externalUrl);
+    if (!url.startsWith('https://')) {
+      throw new Error(`--tunnel-url must be https (got ${url}). The dev-box enforces https.`);
+    }
+    return {
+      url,
+      async close() {
+        /* bring-your-own */
+      },
+      onClose() {
+        /* no process to watch */
+      },
+    };
+  }
+
+  const provider = opts.provider ?? 'cloudflared';
+  if (provider === 'cloudflared') return startCloudflared(opts.port);
+  if (provider === 'ngrok') return startNgrok(opts.port);
+  throw new Error(`Unknown tunnel provider: ${provider as string}`);
+}

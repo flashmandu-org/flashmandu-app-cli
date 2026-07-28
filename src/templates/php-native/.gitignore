@@ -1,0 +1,7 @@
+vendor/
+composer.lock
+*.log
+.DS_Store
+.flashmandu/
+.env
+.env.local
