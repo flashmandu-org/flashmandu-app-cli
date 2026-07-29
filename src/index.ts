@@ -41,6 +41,7 @@ import { makeDevCommand } from './commands/dev';
 import { makePushCommand } from './commands/push';
 import { makeHooksCommand } from './commands/hooks';
 import { makeLogsCommand } from './commands/logs';
+import { makePsCommand, makeStopCommand } from './commands/ps';
 
 const program = new Command();
 
@@ -71,6 +72,8 @@ program.addCommand(makeDevCommand());
 program.addCommand(makePushCommand());
 program.addCommand(makeHooksCommand());
 program.addCommand(makeLogsCommand());
+program.addCommand(makePsCommand());
+program.addCommand(makeStopCommand());
 
 program.exitOverride();
 
