@@ -38,6 +38,8 @@ export interface DevRegisterRequest {
    * the live tunnel origin as `block_origin`. EmbedBlockCatalog hydrates
    * entries that have block_origin + block_path. */
   extensions?: unknown[];
+  /** App-declared sidebar nav items (Spec #2 §S6). */
+  nav_items?: unknown[];
 }
 
 export interface DevRegisterResponse {

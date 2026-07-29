@@ -374,6 +374,15 @@ export function makeDevCommand(): Command {
             })),
           }));
 
+          // App-declared sidebar nav items (Spec #2 §S6). Forwarded to the
+          // host so it can render them in the storefront sidebar.
+          const navItems = (manifest.nav_items ?? []).map((n) => ({
+            label: n.label,
+            path: n.path,
+            icon: n.icon,
+            order: n.order,
+          }));
+
           return registerSandbox({
             slug: manifest.slug,
             name: manifest.name,
@@ -387,6 +396,7 @@ export function makeDevCommand(): Command {
             scopes: manifest.scopes,
             subscribed_events: manifest.subscribed_events,
             extensions,
+            nav_items: navItems,
           });
         };
 
