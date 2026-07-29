@@ -33,6 +33,9 @@ export interface DevRegisterRequest {
   /** Scope enum values + events to subscribe. */
   scopes: string[];
   subscribed_events: string[];
+  /** App Embed Blocks declared in the manifest (Spec #1). Persisted by the
+   * host onto `installed_apps.extensions` so EmbedBlockCatalog resolves them. */
+  embed_blocks?: unknown[];
 }
 
 export interface DevRegisterResponse {

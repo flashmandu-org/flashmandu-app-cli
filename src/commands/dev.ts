@@ -351,6 +351,7 @@ export function makeDevCommand(): Command {
               : undefined,
             scopes: manifest.scopes,
             subscribed_events: manifest.subscribed_events,
+            embed_blocks: manifest.embed_blocks,
           });
         };
 

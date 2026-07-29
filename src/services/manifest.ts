@@ -67,7 +67,76 @@ export type AppManifest = {
   developer_email?: string;
   source_url?: string;
   provider_class?: string;
+  /** Optional App Embed Blocks declared in the manifest (Spec #1). Sent to the
+   * host at dev-register so it persists them on `installed_apps.extensions`. */
+  embed_blocks?: EmbedBlock[];
 };
+
+/**
+ * A storefront App Embed Block declared under `[[embed_blocks]]` in the
+ * manifest (Spec #1). Mirrors the host SDK `EmbedBlockDefinition` shape.
+ */
+export interface EmbedBlockSetting {
+  name: string;
+  label: string;
+  type: string;
+  required?: boolean;
+  help?: string;
+  default?: string | number | boolean | null;
+  /** Static select options: { value, label }. */
+  options?: Array<{ value: string; label: string }>;
+  /** Dynamic options sourced from the app ('app'). */
+  dynamic_options_source?: string;
+  /** Path under the app host that serves the dynamic options list. */
+  dynamic_options_path?: string;
+}
+
+export interface EmbedBlock {
+  type: string;
+  name: string;
+  description?: string;
+  category?: string;
+  icon?: string;
+  /** 'remote' (default) or 'trusted' (platform-managed co-located origin). */
+  hosting_tier?: string;
+  /** Path under the app host the platform iframes. */
+  block_path: string;
+  /** Subset of [identity, resize, navigate, error]. */
+  capabilities?: string[];
+  /** Platform scopes required (usually empty for storefront-only blocks). */
+  scopes?: string[];
+  schema_version?: number;
+  /** Merchant-configurable fields for the block. */
+  settings?: EmbedBlockSetting[];
+}
+
+const EmbedBlockSettingSchema = z.object({
+  name: z.string().min(1),
+  label: z.string().min(1),
+  type: z.string().min(1),
+  required: z.boolean().optional(),
+  help: z.string().max(500).optional(),
+  default: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+  options: z
+    .array(z.object({ value: z.string(), label: z.string() }))
+    .optional(),
+  dynamic_options_source: z.string().optional(),
+  dynamic_options_path: z.string().optional(),
+});
+
+const EmbedBlockSchema = z.object({
+  type: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().max(1000).optional(),
+  category: z.string().max(60).optional(),
+  icon: z.string().max(60).optional(),
+  hosting_tier: z.enum(['remote', 'trusted']).default('remote'),
+  block_path: z.string().min(1),
+  capabilities: z.array(z.string().min(1)).default([]),
+  scopes: z.array(z.string().regex(SCOPE_RE)).default([]),
+  schema_version: z.number().int().min(1).default(1),
+  settings: z.array(EmbedBlockSettingSchema).default([]),
+});
 
 const ManifestInput = z.object({
   slug: SlugSchema.optional(),
@@ -88,6 +157,7 @@ const ManifestInput = z.object({
   developer_email: z.string().email().max(150).optional(),
   source_url: z.string().url().max(255).optional(),
   provider_class: z.string().max(255).optional(),
+  embed_blocks: z.array(EmbedBlockSchema).optional(),
 });
 
 export const ManifestSchema = ManifestInput.superRefine((m, ctx): void => {
