@@ -33,9 +33,11 @@ export interface DevRegisterRequest {
   /** Scope enum values + events to subscribe. */
   scopes: string[];
   subscribed_events: string[];
-  /** App Embed Blocks declared in the manifest (Spec #1). Persisted by the
-   * host onto `installed_apps.extensions` so EmbedBlockCatalog resolves them. */
-  embed_blocks?: unknown[];
+  /** App Embed Blocks (Spec #1) serialized into the `extensions` payload the
+   * host persists on `installed_apps.extensions`. Each entry already carries
+   * the live tunnel origin as `block_origin`. EmbedBlockCatalog hydrates
+   * entries that have block_origin + block_path. */
+  extensions?: unknown[];
 }
 
 export interface DevRegisterResponse {

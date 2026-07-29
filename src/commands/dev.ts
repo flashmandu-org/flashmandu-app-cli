@@ -339,6 +339,41 @@ export function makeDevCommand(): Command {
         // the secrets file, embed URL, and logs going forward.
         let canonicalAppId = manifest.id ?? manifest.slug;
         const registerOnce = async (host: string): Promise<DevRegisterResponse> => {
+          // Serialize embed blocks into the `extensions` payload the host
+          // persists on installed_apps.extensions. The live tunnel origin is
+          // injected as block_origin (the TOML declares only block_path), and
+          // each setting's dynamic_options_* pair is normalized into the
+          // {source,path} object EmbedBlockCatalog + the inspector expect.
+          const extensions = (manifest.embed_blocks ?? []).map((b) => ({
+            type: b.type,
+            name: b.name,
+            description: b.description,
+            category: b.category,
+            icon: b.icon,
+            hosting_tier: b.hosting_tier ?? 'remote',
+            block_origin: host,
+            block_path: b.block_path,
+            capabilities: b.capabilities ?? [],
+            scopes: b.scopes ?? [],
+            schema_version: b.schema_version ?? 1,
+            settings: (b.settings ?? []).map((s) => ({
+              name: s.name,
+              label: s.label,
+              type: s.type,
+              required: s.required,
+              help: s.help,
+              default: s.default,
+              options: s.options,
+              dynamic_options:
+                s.dynamic_options_source || s.dynamic_options_path
+                  ? {
+                      source: s.dynamic_options_source ?? 'app',
+                      path: s.dynamic_options_path ?? '',
+                    }
+                  : undefined,
+            })),
+          }));
+
           return registerSandbox({
             slug: manifest.slug,
             name: manifest.name,
@@ -351,7 +386,7 @@ export function makeDevCommand(): Command {
               : undefined,
             scopes: manifest.scopes,
             subscribed_events: manifest.subscribed_events,
-            embed_blocks: manifest.embed_blocks,
+            extensions,
           });
         };
 
