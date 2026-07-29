@@ -71,10 +71,14 @@ async function startCloudflared(port: number): Promise<Tunnel> {
   // A quick tunnel needs no account or token — just point cloudflared at the
   // local app server.
   const started = cf.tunnel({ '--url': `http://localhost:${port}` });
-  const url = await started.url;
+  const url = normaliseUrl(await started.url);
+
+  // cloudflared assigns the random subdomain before edge DNS is live; wait for
+  // the URL to actually resolve so the dev-box never registers a dead URL.
+  await waitForEdgeReady(url);
 
   return {
-    url: normaliseUrl(url),
+    url,
     async close() {
       await closeProc(started.child);
     },
@@ -115,6 +119,47 @@ async function startNgrok(port: number): Promise<Tunnel> {
 
 function normaliseUrl(url: string): string {
   return url.replace(/\/+$/, '');
+}
+
+/**
+ * Wait until a freshly-provisioned tunnel URL is actually reachable at the
+ * provider's edge.
+ *
+ * Quick-tunnel providers (cloudflared in particular) hand back a random
+ * subdomain the instant they *assign* it, which can be a few seconds before
+ * DNS for that subdomain resolves at the edge. If we register the URL with the
+ * dev-box before then, the platform embeds a URL that fails with
+ * "server IP address could not be found". So we probe the URL (any HTTP
+ * response — even 404/502 — proves DNS + connectivity) and retry until it is
+ * live or the budget elapses. Best-effort: on timeout we still return the URL
+ * and warn (the local network may simply block the probe).
+ */
+async function waitForEdgeReady(url: string, budgetMs = 20000, stepMs = 1000): Promise<void> {
+  const deadline = Date.now() + budgetMs;
+  let lastErr: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        redirect: 'manual',
+        signal: AbortSignal.timeout(3000),
+      });
+      // Any HTTP status means DNS resolved + the edge answered.
+      void res;
+      return;
+    } catch (err) {
+      lastErr = err;
+      await new Promise((r) => setTimeout(r, stepMs));
+    }
+  }
+  // Don't hard-fail — the probe can be blocked locally while the tunnel is fine
+  // for the dev-box. Surface a hint instead.
+  console.warn(
+    `\n  ⚠  Tunnel URL did not confirm reachable within ${Math.round(budgetMs / 1000)}s ` +
+      `(${url}). If the embed shows "server IP address could not be found", wait a few ` +
+      `seconds and refresh, or re-run \`flashmandu-app dev\`.\n`,
+  );
+  void lastErr;
 }
 
 /** Resolve and start a tunnel per the options. */

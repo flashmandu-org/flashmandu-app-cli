@@ -24,7 +24,7 @@
   },
   "main": "dist/index.js",
   "bin": {
-    "flashmandu-app": "dist/index.js"
+    "flashmandu-app": "bin/cli.js"
   },
   "files": [
     "dist",
