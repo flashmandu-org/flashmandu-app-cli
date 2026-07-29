@@ -166,8 +166,16 @@ async function waitForEdgeReady(url: string, budgetMs = 20000, stepMs = 1000): P
 export async function startTunnel(opts: TunnelOptions): Promise<Tunnel> {
   if (opts.externalUrl) {
     const url = normaliseUrl(opts.externalUrl);
-    if (!url.startsWith('https://')) {
-      throw new Error(`--tunnel-url must be https (got ${url}). The dev-box enforces https.`);
+    // https is required for public tunnels. We additionally allow a plain
+    // http loopback URL (http://localhost / 127.0.0.1) for fully-local dev,
+    // where the platform frames the app on the same machine without a tunnel
+    // (the platform's apps.embed.allow_loopback dev flag must be on).
+    const isLoopback = /^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(url);
+    if (!url.startsWith('https://') && !isLoopback) {
+      throw new Error(
+        `--tunnel-url must be https (got ${url}). The dev-box enforces https. ` +
+          `For local dev without a tunnel, use http://localhost:<port> with apps.embed.allow_loopback on.`,
+      );
     }
     return {
       url,
