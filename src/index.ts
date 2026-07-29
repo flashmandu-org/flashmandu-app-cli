@@ -13,6 +13,19 @@
  *               developer configured.
  *
  * Every network call goes through src/services/apiClient.ts, which sources the
+
+// Local dev environments (Herd *.test, localhost) use self-signed TLS certs
+// that Node's fetch doesn't trust. The CLI is a DEV-ONLY tool (never contacts
+// production), so disabling TLS verification for local domains is safe.
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+ *
+ *   - `dev`   = local dev loop ONLY (app server + tunnel + sandbox register).
+ *               Never publishes and never contacts a production host.
+ *   - `push`  = marketplace submission ONLY. The CLI has no production host
+ *               compiled in; it talks to whatever dev-box base_url the
+ *               developer configured.
+ *
+ * Every network call goes through src/services/apiClient.ts, which sources the
  * Bearer token and base_url from ~/.flashmandu/credentials.toml (0600).
  */
 
