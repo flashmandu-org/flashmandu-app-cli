@@ -70,6 +70,9 @@ export type AppManifest = {
   /** Optional App Embed Blocks declared in the manifest (Spec #1). Sent to the
    * host at dev-register so it persists them on `installed_apps.extensions`. */
   embed_blocks?: EmbedBlock[];
+  /** App-declared sidebar nav items (Spec #2 §S6). Sent to the host at
+   * dev-register so it renders them in the storefront sidebar. */
+  nav_items?: NavItem[];
 };
 
 /**
@@ -110,6 +113,18 @@ export interface EmbedBlock {
   settings?: EmbedBlockSetting[];
 }
 
+/**
+ * A developer-declared sidebar nav entry under `[[nav_items]]` in the manifest
+ * (Spec #2 §S6). The host renders these in the storefront sidebar for installed
+ * apps. `path` is app-relative and must start with "/".
+ */
+export interface NavItem {
+  label: string;
+  path: string;
+  icon?: string;
+  order?: number;
+}
+
 const EmbedBlockSettingSchema = z.object({
   name: z.string().min(1),
   label: z.string().min(1),
@@ -138,6 +153,13 @@ const EmbedBlockSchema = z.object({
   settings: z.array(EmbedBlockSettingSchema).default([]),
 });
 
+const NavItemSchema = z.object({
+  label: z.string().min(1).max(80),
+  path: z.string().min(1).max(200).regex(/^\//, 'path must start with "/"'),
+  icon: z.string().max(60).optional(),
+  order: z.number().int().min(0).optional(),
+});
+
 const ManifestInput = z.object({
   slug: SlugSchema.optional(),
   id: z
@@ -158,6 +180,7 @@ const ManifestInput = z.object({
   source_url: z.string().url().max(255).optional(),
   provider_class: z.string().max(255).optional(),
   embed_blocks: z.array(EmbedBlockSchema).optional(),
+  nav_items: z.array(NavItemSchema).optional(),
 });
 
 export const ManifestSchema = ManifestInput.superRefine((m, ctx): void => {
