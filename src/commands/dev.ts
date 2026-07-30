@@ -238,6 +238,12 @@ export function makeDevCommand(): Command {
         // it. The CLI pins the port for both auto-detected types (PORT env for
         // node, -S localhost:port for php), so the preflight against --port is
         // valid; a user-supplied --app-command owns its own port, so we skip it.
+        //
+        // NOTE: --tunnel-url implies --no-app-server because the tunnel already
+        // points at a running server (the user started it separately).
+        const tunnelUrlProvided = typeof opts.tunnelUrl === 'string' && opts.tunnelUrl.length > 0;
+        const shouldStartAppServer = opts.appServer && !tunnelUrlProvided;
+
         const isOverride = typeof opts.appCommand === 'string' && opts.appCommand.length > 0;
         const resolved = isOverride
           ? { command: opts.appCommand as string, env: {} as Record<string, string>, type: null as AppType | null }
@@ -245,7 +251,7 @@ export function makeDevCommand(): Command {
         const isManagedServer = !isOverride;
         let appServerDied = false;
 
-        if (opts.appServer) {
+        if (shouldStartAppServer) {
           // Auto-install node deps if missing (first run after `app init`).
           if (resolved.type === 'node' && !(await pathExists(path.join(appDir, 'node_modules')))) {
             spinner.start('No node_modules found — installing dependencies (npm install)…');
