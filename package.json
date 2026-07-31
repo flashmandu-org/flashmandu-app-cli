@@ -39,7 +39,8 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "npm run clean && npm run build",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "smoke:scaffold": "node scripts/smoke-scaffold.mjs"
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",
