@@ -67,6 +67,8 @@ export type AppManifest = {
   developer_email?: string;
   source_url?: string;
   provider_class?: string;
+  /** Where the production build is hosted: 'vercel' | 'self'. Set by `deploy`. */
+  hosting_target?: string;
   /** Optional App Embed Blocks declared in the manifest (Spec #1). Sent to the
    * host at dev-register so it persists them on `installed_apps.extensions`. */
   embed_blocks?: EmbedBlock[];
@@ -249,4 +251,63 @@ export async function readManifest(dir: string): Promise<AppManifest> {
 /** Serialize a manifest to TOML (used by `app init`). */
 export function serializeManifest(m: AppManifest): string {
   return TOML.stringify(m as unknown as TOML.JsonMap);
+}
+
+/**
+ * Bump a semver patch: 0.1.0 -> 0.1.1. Falls back to appending `.1` for a
+ * version that is not three numeric parts, so a non-standard version still
+ * moves forward rather than silently resubmitting the same one.
+ */
+export function bumpPatch(version: string): string {
+  const parts = version.trim().split('.');
+  if (parts.length === 3 && parts.every((p) => /^\d+$/.test(p))) {
+    return `${parts[0]}.${parts[1]}.${Number(parts[2]) + 1}`;
+  }
+
+  return `${version.trim()}.1`;
+}
+
+/**
+ * Rewrite top-level scalar keys in the manifest IN PLACE, preserving comments,
+ * ordering and formatting.
+ *
+ * A full TOML re-serialize (serializeManifest) would flatten the file and drop
+ * every comment the template ships with, so this edits only the lines it owns
+ * and appends keys that do not exist yet.
+ */
+export async function updateManifestFields(
+  dir: string,
+  fields: Record<string, string>,
+): Promise<void> {
+  const file = path.join(dir, MANIFEST_FILENAME);
+  let raw = await fs.readFile(file, 'utf8');
+
+  for (const [key, value] of Object.entries(fields)) {
+    const line = `${key} = ${JSON.stringify(value)}`;
+    // Only match the key at top level (start of line, before any [table]).
+    const re = new RegExp(`^${key}\\s*=.*$`, 'm');
+
+    if (re.test(raw)) {
+      raw = raw.replace(re, line);
+      continue;
+    }
+
+    // Place the key with the OTHER top-level keys: directly after the last
+    // `key = value` line that precedes the first table. Inserting immediately
+    // before the table header instead parked new keys underneath whatever
+    // comment block introduced that table, reading as if they belonged to it.
+    const lines = raw.split('\n');
+    const firstTableIdx = lines.findIndex((l) => /^\s*\[/.test(l));
+    const limit = firstTableIdx === -1 ? lines.length : firstTableIdx;
+
+    let lastKeyIdx = -1;
+    for (let i = 0; i < limit; i++) {
+      if (/^[A-Za-z_][A-Za-z0-9_-]*\s*=/.test(lines[i] ?? '')) lastKeyIdx = i;
+    }
+
+    lines.splice(lastKeyIdx === -1 ? limit : lastKeyIdx + 1, 0, line);
+    raw = lines.join('\n');
+  }
+
+  await fs.writeFile(file, raw, 'utf8');
 }
