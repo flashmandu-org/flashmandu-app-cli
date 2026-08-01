@@ -2,8 +2,9 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import path from 'node:path';
-import { readManifest } from '../services/manifest';
+import { bumpPatch, readManifest, updateManifestFields } from '../services/manifest';
 import { post } from '../services/apiClient';
+import { isPlaceholderUrl } from '../services/verify';
 
 /**
  * `flashmandu-app push` — submit the app to the dev-box marketplace for
@@ -18,6 +19,8 @@ import { post } from '../services/apiClient';
 interface SubmissionResponse {
   id: number | string;
   status: string;
+  /** Canonical, publisher-namespaced id the platform assigned. */
+  app_id?: string;
 }
 
 export function makePushCommand(): Command {
@@ -28,6 +31,8 @@ export function makePushCommand(): Command {
     .option('--developer-email <email>', 'Contact email (required if missing from manifest)')
     .option('--source-url <url>', 'Public source URL (e.g. github)')
     .option('--description <text>', 'Override the manifest description')
+    .option('--version <semver>', 'Submit this exact version instead of auto-bumping')
+    .option('--no-bump', 'Submit the manifest version as-is, without bumping')
     .option('--yes', 'Skip the confirmation prompt')
     .action(
       async (opts: {
@@ -36,10 +41,28 @@ export function makePushCommand(): Command {
         developerEmail?: string;
         sourceUrl?: string;
         description?: string;
+        version?: string;
+        bump?: boolean;
         yes?: boolean;
       }) => {
         const manifest = await readManifest(path.resolve(opts.dir));
 
+        // The template ships https://APP-HOST/... placeholders. Pushing those
+        // produced an app that listed in the marketplace and then dead-ended
+        // at ERR_NAME_NOT_RESOLVED when a merchant clicked Connect.
+        const badUrls = (['authorize_url', 'token_url', 'webhook_url'] as const)
+          .filter((field) => isPlaceholderUrl(manifest[field] ?? ''));
+
+        if (badUrls.length > 0) {
+          throw new Error(
+            `Cannot push: ${badUrls.join(', ')} still ${badUrls.length === 1 ? 'holds a' : 'hold'} placeholder host.\n` +
+              `Run \`flashmandu-app deploy --target vercel\` or \`--target self\` to set a real host first.`,
+          );
+        }
+
+        // Developer identity is asked for ONCE. The first push writes it into
+        // the manifest, so every later version of the same app reuses it and
+        // the developer never re-types it.
         const developerName =
           opts.developerName ?? manifest.developer_name;
         const developerEmail =
@@ -48,17 +71,24 @@ export function makePushCommand(): Command {
 
         if (!developerName || !developerEmail) {
           throw new Error(
-            'Marketplace submission requires developer_name and developer_email. ' +
-              'Provide via flashmandu.app.toml or --developer-name / --developer-email.',
+            'First submission needs developer_name and developer_email. ' +
+              'Pass --developer-name / --developer-email once — they are saved to ' +
+              'flashmandu.app.toml and reused for every later push.',
           );
         }
+
+        // Each push is a NEW version for review; resubmitting the same one
+        // leaves the operator unable to tell the builds apart. Bump the patch
+        // by default, and persist it so the manifest and the marketplace agree.
+        const submittedVersion =
+          opts.version ?? (opts.bump === false ? manifest.version : bumpPatch(manifest.version));
 
         const description = opts.description ?? manifest.description ?? '';
 
         if (!opts.yes) {
           const { confirm } = await import('@inquirer/prompts');
           const ok = await confirm({
-            message: `Submit "${manifest.name}" (${manifest.slug} v${manifest.version}) to the dev-box marketplace?`,
+            message: `Submit "${manifest.name}" (${manifest.slug} v${submittedVersion}) to the dev-box marketplace?`,
             default: false,
           });
           if (!ok) {
@@ -74,11 +104,25 @@ export function makePushCommand(): Command {
             {
               developer_name: developerName,
               developer_email: developerEmail,
+              // Leaf slug only — the platform namespaces it under the
+              // developer's publisher handle so ids match installed apps
+              // (`owner-1/interactive-map`) and cannot collide across devs.
               app_id: manifest.slug,
               name: manifest.name,
               provider_class: manifest.provider_class,
               source_url: sourceUrl,
               description,
+              // A remote app is installed over OAuth and contributes blocks /
+              // nav items. Without these the platform had nothing to list or
+              // install with, so approving a pushed app did nothing at all.
+              authorize_url: manifest.authorize_url,
+              token_url: manifest.token_url,
+              webhook_url: manifest.webhook_url,
+              version: submittedVersion,
+              scopes: manifest.scopes ?? [],
+              subscribed_events: manifest.subscribed_events ?? [],
+              embed_blocks: manifest.embed_blocks ?? [],
+              nav_items: manifest.nav_items ?? [],
             },
             // Submission is the open, throttled endpoint (no Bearer required);
             // but if a token is present it's still sent (harmless, and lets
@@ -86,6 +130,22 @@ export function makePushCommand(): Command {
             { noAuth: true },
           );
           spinner.succeed(chalk.green(`Submitted (id #${res.id}, status: ${res.status}).`));
+          // Persist only AFTER the submission is accepted, so a failed push
+          // does not burn a version number or record an unused identity.
+          await updateManifestFields(path.resolve(opts.dir), {
+            version: submittedVersion,
+            developer_name: developerName,
+            developer_email: developerEmail,
+          });
+          if (submittedVersion !== manifest.version) {
+            console.log(chalk.dim(`  Version bumped ${manifest.version} -> ${submittedVersion} in flashmandu.app.toml`));
+          }
+          if (res.app_id) {
+            // The platform namespaces the slug under the developer's publisher
+            // handle; show it so the developer knows the id merchants install
+            // and storefront blocks reference.
+            console.log(chalk.dim(`  Marketplace id: ${res.app_id}`));
+          }
           console.log(
             chalk.dim('  An operator will review and approve. You cannot self-publish.'),
           );
