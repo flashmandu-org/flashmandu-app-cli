@@ -23,4 +23,18 @@ describe('deriveUrls', () => {
   it('rejects a non-https base', () => {
     expect(() => deriveUrls('http://map.acme.com')).toThrow(/https/i);
   });
+
+  it('derives platform urls on the platform hostname scheme, ignoring any developer-supplied host', () => {
+    expect(
+      deriveUrls('https://placeholder.example.com', {
+        target: 'platform',
+        slug: 'loyalty',
+        platformHost: 'https://business.autohisab.com',
+      }),
+    ).toEqual({
+      authorize_url: 'https://loyalty.apps.business.autohisab.com/oauth/authorize',
+      token_url: 'https://loyalty.apps.business.autohisab.com/oauth/token',
+      webhook_url: 'https://loyalty.apps.business.autohisab.com/webhooks/flashmandu',
+    });
+  });
 });

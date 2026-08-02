@@ -67,8 +67,11 @@ export type AppManifest = {
   developer_email?: string;
   source_url?: string;
   provider_class?: string;
-  /** Where the production build is hosted: 'vercel' | 'self'. Set by `deploy`. */
+  /** Where the production build is hosted: 'vercel' | 'self' | 'platform'. Set by `deploy`. */
   hosting_target?: string;
+  /** Immutable sha256:<64 hex> digest of the image pushed by `deploy --target platform`.
+   * A digest, never a tag — the platform refuses to approve a tag. */
+  image_digest?: string;
   /** Optional App Embed Blocks declared in the manifest (Spec #1). Sent to the
    * host at dev-register so it persists them on `installed_apps.extensions`. */
   embed_blocks?: EmbedBlock[];
@@ -181,6 +184,11 @@ const ManifestInput = z.object({
   developer_email: z.string().email().max(150).optional(),
   source_url: z.string().url().max(255).optional(),
   provider_class: z.string().max(255).optional(),
+  hosting_target: z.enum(['vercel', 'self', 'platform']).optional(),
+  image_digest: z
+    .string()
+    .regex(/^sha256:[0-9a-f]{64}$/, 'image_digest must be sha256:<64 hex> (a digest, never a tag)')
+    .optional(),
   embed_blocks: z.array(EmbedBlockSchema).optional(),
   nav_items: z.array(NavItemSchema).optional(),
 });
