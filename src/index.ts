@@ -49,8 +49,15 @@ const program = new Command();
 program
   .name('flashmandu-app')
   .description(
-    'Developer CLI for Flashmandu storefront apps. `dev` runs the local ' +
-      'sandbox loop; `push` submits to the dev-box marketplace.',
+    'Developer CLI for Flashmandu storefront apps.\n\n' +
+      '  dev      local dev loop (app server + tunnel + sandbox)\n' +
+      '  deploy   build + push the image + submit for review (--target platform|vercel|self)\n' +
+      '  push     submit the app for review (no build)\n' +
+      '  init     scaffold a new app from the starter template\n' +
+      '  login    authenticate to a Flashmandu host\n' +
+      '  logs     recent webhook deliveries (or platform pod logs with --platform)\n' +
+      '  ps       list running dev app processes\n' +
+      "Run `flashmandu-app <command> --help` for each command's options.",
   )
   .option(
     '--base-url <url>',
