@@ -6,13 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { readManifest, updateManifestFields } from '../services/manifest';
 import { deriveUrls, type HostingTarget } from '../services/hosting';
 import { probeUrl } from '../services/verify';
-import { fetchCapabilities } from '../services/platformCapabilities';
-import {
-  assertPlatformDeployReady,
-  isDockerOnPath,
-  isRegistryReachable,
-  resolveTenantRegistry,
-} from '../services/platformDeploy';
+import { buildOnPlatform } from '../services/buildSubmitter';
 
 /**
  * `flashmandu-app deploy` — record a real production host on the manifest.
@@ -60,70 +54,27 @@ export function makeDeployCommand(): Command {
       let baseUrl = opts.baseUrl ?? merged.baseUrl;
 
       if (target === 'platform') {
-        // The platform advertises its environment, tenant registry, and
-        // platform-hosting availability. The CLI compiles in NO host — every
-        // address comes from here, and a platform that cannot host platform
-        // apps is refused up front rather than silently pushed to production.
+        // Server-side build: the platform builds the image (kaniko Job), so the
+        // developer's machine needs NO Docker — only a login. The CLI ships
+        // source and polls for the resulting digest.
         const { getActive } = await import('../services/credentials');
-        let loggedIn = true;
         try {
           await getActive();
         } catch {
-          loggedIn = false;
-        }
-
-        const caps = loggedIn ? await fetchCapabilities() : null;
-
-        // Preconditions (cheapest first): login, hosting available, registry
-        // advertised, docker on PATH, registry reachable. Any miss throws a
-        // specific, actionable message before any build work starts.
-        await assertPlatformDeployReady(caps, caps?.tenant_registry ?? null, {
-          isLoggedIn: async () => loggedIn,
-          dockerOnPath: isDockerOnPath,
-          registryReachable: isRegistryReachable,
-        });
-
-        // Registry resolution order: --registry > FLASHMANDU_TENANT_REGISTRY >
-        // platform-advertised. No hardcoded fallback — the production address
-        // must never be reachable from a non-production session.
-        const registry = resolveTenantRegistry({
-          flag: opts.registry,
-          capabilities: caps,
-        });
-        const platformHost = opts.platformHost ?? (await platformHostFromProfile());
-
-        // The platform namespaces the slug under the publisher handle derived
-        // from the developer identity; mirror that derivation so the image
-        // path matches the app id the platform will run.
-        const handle = publisherHandleFromEmail(manifest.developer_email);
-        const repo = `${registry}/${handle}/${manifest.slug}`;
-
-        const spinner = ora(`Building ${repo}…`).start();
-        try {
-          execFileSync('docker', ['build', '-t', repo, '.'], { cwd: dir, stdio: 'pipe' });
-          execFileSync('docker', ['push', repo], { cwd: dir, stdio: 'pipe' });
-        } catch (err) {
-          spinner.fail('Docker build/push failed.');
           throw new Error(
-            `Could not build or push ${repo}. Is Docker running and can it reach ${registry}?\n` +
-              (err as Error).message,
+            'Log in first (`flashmandu-app login`) — `deploy --target platform` uploads source to the platform to build.',
           );
         }
 
-        // Resolve the digest from the pushed image — a tag can be repointed
-        // after review; the digest is the exact thing the operator approves
-        // and the exact thing the cluster runs.
-        const digestRef = execFileSync(
-          'docker',
-          ['inspect', '--format={{index .RepoDigests 0}}', repo],
-          { cwd: dir, encoding: 'utf8' },
-        ).trim();
-        const digest = digestRef.split('@')[1] ?? '';
-        if (!/^sha256:[0-9a-f]{64}$/.test(digest)) {
-          spinner.fail('Could not resolve an image digest.');
-          throw new Error(`docker inspect returned "${digestRef}" — expected <repo>@sha256:<64 hex>.`);
-        }
-        spinner.succeed(`Pushed ${digestRef}`);
+        const platformHost = opts.platformHost ?? (await platformHostFromProfile());
+        const handle = publisherHandleFromEmail(manifest.developer_email);
+
+        const spinner = ora(`Building ${handle}/${manifest.slug} on the platform…`).start();
+        const { buildId, digest } = await buildOnPlatform(dir, manifest.slug).catch((err) => {
+          spinner.fail('Server-side build failed.');
+          throw err;
+        });
+        spinner.succeed(`Built ${handle}/${manifest.slug} (build #${buildId})`);
 
         // Platform URLs are derived on the platform's own hostname scheme,
         // not probed against a developer host.
