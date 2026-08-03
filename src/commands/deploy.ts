@@ -3,10 +3,12 @@ import chalk from 'chalk';
 import ora from 'ora';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { readManifest, updateManifestFields } from '../services/manifest';
+import { bumpPatch, readManifest, updateManifestFields } from '../services/manifest';
 import { deriveUrls, type HostingTarget } from '../services/hosting';
 import { probeUrl } from '../services/verify';
-import { buildOnPlatform } from '../services/buildSubmitter';
+import { ensureDocker } from '../services/dockerRuntime';
+import { fetchCapabilities } from '../services/platformCapabilities';
+import { submitAppForReview } from '../services/submissions';
 
 /**
  * `flashmandu-app deploy` — record a real production host on the manifest.
@@ -54,44 +56,62 @@ export function makeDeployCommand(): Command {
       let baseUrl = opts.baseUrl ?? merged.baseUrl;
 
       if (target === 'platform') {
-        // Server-side build: the platform builds the image (kaniko Job), so the
-        // developer's machine needs NO Docker — only a login. The CLI ships
-        // source and polls for the resulting digest.
         const { getActive } = await import('../services/credentials');
-        try {
-          await getActive();
-        } catch {
+        try { await getActive(); } catch {
+          throw new Error('Log in first (`flashmandu-app login`).');
+        }
+
+        const caps = await fetchCapabilities();
+        if (!caps.platform_hosting || !caps.tenant_registry) {
           throw new Error(
-            'Log in first (`flashmandu-app login`) — `deploy --target platform` uploads source to the platform to build.',
+            'This platform cannot host platform apps (production only). Run `flashmandu-app dev` for local development.',
           );
         }
-
-        const platformHost = opts.platformHost ?? (await platformHostFromProfile());
-        const handle = publisherHandleFromEmail(manifest.developer_email);
-
-        const spinner = ora(`Building ${handle}/${manifest.slug} on the platform…`).start();
-        const { buildId, digest } = await buildOnPlatform(dir, manifest.slug).catch((err) => {
-          spinner.fail('Server-side build failed.');
-          throw err;
-        });
-        spinner.succeed(`Built ${handle}/${manifest.slug} (build #${buildId})`);
-
-        // Platform URLs are derived on the platform's own hostname scheme,
-        // not probed against a developer host.
-        const urls = deriveUrls('', { target: 'platform', slug: manifest.slug, platformHost });
-
-        await updateManifestFields(dir, {
-          ...urls,
-          hosting_target: 'platform',
-          image_digest: digest,
-        });
-
-        console.log(chalk.green(`\n  Recorded platform deployment for ${handle}/${manifest.slug} in flashmandu.app.toml:`));
-        console.log(chalk.dim(`    image_digest = ${digest}`));
-        for (const [field, url] of Object.entries(urls)) {
-          console.log(chalk.dim(`    ${field} = ${url}`));
+        const registry = caps.tenant_registry;
+        const registryUser = caps.registry_push_user;
+        const registryPassword = caps.registry_push_password;
+        if (!registryUser || !registryPassword) {
+          throw new Error('The platform did not advertise a registry push credential.');
         }
-        console.log(chalk.dim('\n  Next: flashmandu-app push'));
+
+        // 1. Ensure Docker is available (installs OrbStack/etc. if missing).
+        ensureDocker();
+
+        const handle = publisherHandleFromEmail(manifest.developer_email);
+        const repo = `${registry}/${handle}/${manifest.slug}`;
+
+        const spinner = ora(`Building ${repo}…`).start();
+        try {
+          execFileSync('docker', ['login', '-u', registryUser, '-p', registryPassword, registry], { stdio: 'pipe' });
+          execFileSync('docker', ['build', '-t', repo, '.'], { cwd: dir, stdio: 'pipe' });
+          execFileSync('docker', ['push', repo], { cwd: dir, stdio: 'pipe' });
+        } catch (err) {
+          spinner.fail('Docker build/push failed.');
+          throw new Error(`Could not build or push ${repo}.\n${(err as Error).message}`);
+        }
+
+        const digestRef = execFileSync('docker', ['inspect', '--format={{index .RepoDigests 0}}', repo], {
+          cwd: dir, encoding: 'utf8',
+        }).trim();
+        const digest = digestRef.split('@')[1] ?? '';
+        if (!/^sha256:[0-9a-f]{64}$/.test(digest)) {
+          spinner.fail('Could not resolve an image digest.');
+          throw new Error(`docker inspect returned "${digestRef}" — expected <repo>@sha256:<64 hex>.`);
+        }
+        spinner.succeed(`Pushed ${digestRef}`);
+
+        const version = bumpPatch(manifest.version);
+        const platformHost = opts.platformHost ?? (await platformHostFromProfile());
+        const urls = deriveUrls('', { target: 'platform', slug: manifest.slug, platformHost });
+        await updateManifestFields(dir, { ...urls, hosting_target: 'platform', image_digest: digest, version });
+
+        // 2. Submit the versioned app for review — deploy does everything.
+        await submitAppForReview(manifest, { version });
+
+        console.log(chalk.green(`\n  Built, pushed and submitted ${handle}/${manifest.slug} v${version}:`));
+        console.log(chalk.dim(`    image_digest = ${digest}`));
+        console.log(chalk.dim(`    version      = ${version}`));
+        console.log(chalk.dim('\n  Next: an operator reviews and approves the submission.'));
         return;
       }
 

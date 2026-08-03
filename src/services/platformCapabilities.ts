@@ -17,6 +17,13 @@ export interface PlatformCapabilities {
   tenant_registry: string | null;
   /** Whether the platform can host platform-target apps (production only). */
   platform_hosting: boolean;
+  /**
+   * Registry push credential the platform advertises for `deploy --target
+   * platform` (Task 2). The CLI uses it for `docker login` instead of asking
+   * the developer for one. Null where the platform did not advertise it.
+   */
+  registry_push_user: string | null;
+  registry_push_password: string | null;
 }
 
 /** Fetch the platform's runtime capabilities. Requires an authenticated profile. */
