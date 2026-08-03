@@ -6,6 +6,13 @@ import { execFileSync } from 'node:child_process';
 import { readManifest, updateManifestFields } from '../services/manifest';
 import { deriveUrls, type HostingTarget } from '../services/hosting';
 import { probeUrl } from '../services/verify';
+import { fetchCapabilities } from '../services/platformCapabilities';
+import {
+  assertPlatformDeployReady,
+  isDockerOnPath,
+  isRegistryReachable,
+  resolveTenantRegistry,
+} from '../services/platformDeploy';
 
 /**
  * `flashmandu-app deploy` — record a real production host on the manifest.
@@ -53,9 +60,36 @@ export function makeDeployCommand(): Command {
       let baseUrl = opts.baseUrl ?? merged.baseUrl;
 
       if (target === 'platform') {
-        const registry = opts.registry
-          ?? process.env.FLASHMANDU_TENANT_REGISTRY
-          ?? '10.10.0.2:5000';
+        // The platform advertises its environment, tenant registry, and
+        // platform-hosting availability. The CLI compiles in NO host — every
+        // address comes from here, and a platform that cannot host platform
+        // apps is refused up front rather than silently pushed to production.
+        const { getActive } = await import('../services/credentials');
+        let loggedIn = true;
+        try {
+          await getActive();
+        } catch {
+          loggedIn = false;
+        }
+
+        const caps = loggedIn ? await fetchCapabilities() : null;
+
+        // Preconditions (cheapest first): login, hosting available, registry
+        // advertised, docker on PATH, registry reachable. Any miss throws a
+        // specific, actionable message before any build work starts.
+        await assertPlatformDeployReady(caps, caps?.tenant_registry ?? null, {
+          isLoggedIn: async () => loggedIn,
+          dockerOnPath: isDockerOnPath,
+          registryReachable: isRegistryReachable,
+        });
+
+        // Registry resolution order: --registry > FLASHMANDU_TENANT_REGISTRY >
+        // platform-advertised. No hardcoded fallback — the production address
+        // must never be reachable from a non-production session.
+        const registry = resolveTenantRegistry({
+          flag: opts.registry,
+          capabilities: caps,
+        });
         const platformHost = opts.platformHost ?? (await platformHostFromProfile());
 
         // The platform namespaces the slug under the publisher handle derived

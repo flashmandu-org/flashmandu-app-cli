@@ -34,6 +34,11 @@ export function makePushCommand(): Command {
     .option('--version <semver>', 'Submit this exact version instead of auto-bumping')
     .option('--no-bump', 'Submit the manifest version as-is, without bumping')
     .option('--yes', 'Skip the confirmation prompt')
+    // `--target` is accepted only to reject it with an explanation. Hosting is
+    // chosen by `deploy` and recorded in the manifest as hosting_target; `push`
+    // is marketplace publish only. Accepting the flag turns commander's opaque
+    // "unknown option '--target'" into a message that points at `deploy`.
+    .option('-t, --target <target>', 'Rejected: hosting is chosen by `deploy`, not `push`')
     .action(
       async (opts: {
         dir: string;
@@ -44,7 +49,12 @@ export function makePushCommand(): Command {
         version?: string;
         bump?: boolean;
         yes?: boolean;
+        target?: string;
       }) => {
+        if (opts.target) {
+          throw new Error(pushTargetNotSupported(opts.target));
+        }
+
         const manifest = await readManifest(path.resolve(opts.dir));
 
         // The template ships https://APP-HOST/... placeholders. Pushing those
@@ -157,4 +167,20 @@ export function makePushCommand(): Command {
     );
 
   return cmd;
+}
+
+/**
+ * Message shown when a developer passes `--target` to `push`. Hosting is a
+ * property of deployment, not of a submission: `deploy` chooses it and records
+ * it in the manifest as `hosting_target`, so duplicating the flag on `push`
+ * would let the two disagree. Reject it with an explanation instead of
+ * commander's generic "unknown option" error.
+ */
+export function pushTargetNotSupported(target: string): string {
+  return (
+    `\`push\` does not take --target (${target}). Hosting is chosen by ` +
+      `\`flashmandu-app deploy\` and recorded in the manifest as hosting_target; ` +
+      `\`push\` only submits the app to the marketplace for review. ` +
+      `Run \`flashmandu-app deploy --target ${target}\` to set the host.`
+  );
 }
