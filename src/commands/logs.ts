@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { readManifest } from '../services/manifest';
 import { listDeliveries, type DeliveryRow } from '../services/devRegistrar';
+import { fetchPlatformLogs, formatPlatformLogs } from '../services/platformLogs';
 
 /**
  * `flashmandu-app logs` — show recent webhook deliveries the dev-box attempted
@@ -92,10 +93,28 @@ export function makeLogsCommand(): Command {
     .option('-d, --dir <path>', 'App directory', '.')
     .option('--app-slug <slug>', 'Override app slug (default: from manifest)')
     .option('--app-id <id>', 'Alias of --app-slug for back-compat')
+    .option(
+      '--platform <appId>',
+      'Show platform-hosted pod logs for <publisher>/<slug> instead of dev deliveries',
+    )
     .option('--tail', 'Poll for new deliveries every 5s until Ctrl+C')
     .option('--interval <seconds>', 'Poll interval for --tail', '5')
     .action(
-      async (opts: { dir: string; appSlug?: string; appId?: string; tail?: boolean; interval: string }) => {
+      async (opts: {
+        dir: string;
+        appSlug?: string;
+        appId?: string;
+        platform?: string;
+        tail?: boolean;
+        interval: string;
+      }) => {
+        // Platform-hosted pod logs: fetch from the cluster via the platform.
+        if (opts.platform) {
+          const res = await fetchPlatformLogs(opts.platform);
+          console.log(formatPlatformLogs(res));
+          return;
+        }
+
         const appDir = path.resolve(opts.dir);
         let slug = opts.appSlug ?? opts.appId;
         if (!slug) {
