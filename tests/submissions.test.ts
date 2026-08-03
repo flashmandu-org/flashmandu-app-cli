@@ -32,4 +32,30 @@ describe('submitAppForReview', () => {
       { noAuth: true },
     );
   });
+
+  it('accepts real URLs spread over a placeholder manifest (deploy --target platform shape)', async () => {
+    // Regression guard for the first-deploy bug: deploy.ts derives real
+    // platform URLs and must spread them over the in-memory manifest before
+    // submit, otherwise the helper's placeholder check throws on a fresh
+    // template whose manifest still carries APP-HOST placeholders.
+    (apiClient.post as any).mockResolvedValue({ id: 9, app_id: 'acme/widget' });
+    const freshTemplate: any = {
+      ...manifest,
+      authorize_url: 'https://APP-HOST/oauth/authorize',
+      token_url: 'https://APP-HOST/oauth/token',
+      webhook_url: 'https://APP-HOST/webhooks/flashmandu',
+    };
+    const derivedUrls = {
+      authorize_url: 'https://widget.apps.flashmandu.app/oauth/authorize',
+      token_url: 'https://widget.apps.flashmandu.app/oauth/token',
+      webhook_url: 'https://widget.apps.flashmandu.app/webhooks/flashmandu',
+    };
+    const res = await submitAppForReview({ ...freshTemplate, ...derivedUrls }, { version: '0.2.0' });
+    expect(res.id).toBe(9);
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/api/apps/app-submissions',
+      expect.objectContaining({ authorize_url: derivedUrls.authorize_url, version: '0.2.0' }),
+      { noAuth: true },
+    );
+  });
 });

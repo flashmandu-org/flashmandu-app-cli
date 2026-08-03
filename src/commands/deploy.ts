@@ -106,7 +106,11 @@ export function makeDeployCommand(): Command {
         await updateManifestFields(dir, { ...urls, hosting_target: 'platform', image_digest: digest, version });
 
         // 2. Submit the versioned app for review — deploy does everything.
-        await submitAppForReview(manifest, { version });
+        // Spread the derived real URLs over the in-memory manifest so the
+        // helper's placeholder-URL check sees the just-persisted platform URLs
+        // (the manifest read at the top still carries the originals, which for
+        // a first deploy of a fresh template are APP-HOST placeholders).
+        await submitAppForReview({ ...manifest, ...urls }, { version });
 
         console.log(chalk.green(`\n  Built, pushed and submitted ${handle}/${manifest.slug} v${version}:`));
         console.log(chalk.dim(`    image_digest = ${digest}`));
