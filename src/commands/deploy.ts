@@ -82,7 +82,11 @@ export function makeDeployCommand(): Command {
 
         const spinner = ora(`Building ${repo}…`).start();
         try {
-          execFileSync('docker', ['login', '-u', registryUser, '-p', registryPassword, registry], { stdio: 'pipe' });
+          execFileSync('docker', ['login', '-u', registryUser, '--password-stdin', registry], {
+            cwd: dir,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            input: registryPassword,
+          });
           execFileSync('docker', ['build', '-t', repo, '.'], { cwd: dir, stdio: 'pipe' });
           execFileSync('docker', ['push', repo], { cwd: dir, stdio: 'pipe' });
         } catch (err) {
@@ -103,7 +107,6 @@ export function makeDeployCommand(): Command {
         const version = bumpPatch(manifest.version);
         const platformHost = opts.platformHost ?? (await platformHostFromProfile());
         const urls = deriveUrls('', { target: 'platform', slug: manifest.slug, platformHost });
-        await updateManifestFields(dir, { ...urls, hosting_target: 'platform', image_digest: digest, version });
 
         // 2. Submit the versioned app for review — deploy does everything.
         // Spread the derived real URLs over the in-memory manifest so the
@@ -111,6 +114,10 @@ export function makeDeployCommand(): Command {
         // (the manifest read at the top still carries the originals, which for
         // a first deploy of a fresh template are APP-HOST placeholders).
         await submitAppForReview({ ...manifest, ...urls }, { version });
+
+        // Persist the version + digest only after the submission succeeds, so a
+        // failed submit does not burn a version number (mirrors `push`).
+        await updateManifestFields(dir, { ...urls, hosting_target: 'platform', image_digest: digest, version });
 
         console.log(chalk.green(`\n  Built, pushed and submitted ${handle}/${manifest.slug} v${version}:`));
         console.log(chalk.dim(`    image_digest = ${digest}`));
