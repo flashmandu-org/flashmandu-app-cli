@@ -3,29 +3,19 @@ import chalk from 'chalk';
 import ora from 'ora';
 import path from 'node:path';
 import { bumpPatch, readManifest, updateManifestFields } from '../services/manifest';
-import { post } from '../services/apiClient';
-import { isPlaceholderUrl } from '../services/verify';
+import { submitAppForReview } from '../services/submissions';
 
 /**
  * `flashmandu-app push` — submit the app to the dev-box marketplace for
- * operator review. Reserved verb: marketplace publish ONLY. It NEVER touches a
- * production host. The CLI has no production host compiled in.
- *
- * Hits `POST /api/apps/app-submissions` (the open, throttled submission
- * endpoint) using metadata from `flashmandu.app.toml` plus developer fields
- * the developer must provide (name, email, source_url).
+ * operator review. Reserved verb: marketplace publish ONLY. It NEVER builds,
+ * deploys, or touches a production host — use `deploy` for that. The submit
+ * mechanics (placeholder-URL guard, identity validation, POST) live in
+ * `submitAppForReview`, shared with `deploy`.
  */
-
-interface SubmissionResponse {
-  id: number | string;
-  status: string;
-  /** Canonical, publisher-namespaced id the platform assigned. */
-  app_id?: string;
-}
 
 export function makePushCommand(): Command {
   const cmd = new Command('push')
-    .description('Submit this app to the dev-box marketplace for review. Does NOT touch prod.')
+    .description('Submit this app to the marketplace for operator review. Does NOT build or deploy — use `deploy` for that.')
     .option('-d, --dir <path>', 'App directory', '.')
     .option('--developer-name <name>', 'Your name or org (required if missing from manifest)')
     .option('--developer-email <email>', 'Contact email (required if missing from manifest)')
@@ -57,43 +47,11 @@ export function makePushCommand(): Command {
 
         const manifest = await readManifest(path.resolve(opts.dir));
 
-        // The template ships https://APP-HOST/... placeholders. Pushing those
-        // produced an app that listed in the marketplace and then dead-ended
-        // at ERR_NAME_NOT_RESOLVED when a merchant clicked Connect.
-        const badUrls = (['authorize_url', 'token_url', 'webhook_url'] as const)
-          .filter((field) => isPlaceholderUrl(manifest[field] ?? ''));
-
-        if (badUrls.length > 0) {
-          throw new Error(
-            `Cannot push: ${badUrls.join(', ')} still ${badUrls.length === 1 ? 'holds a' : 'hold'} placeholder host.\n` +
-              `Run \`flashmandu-app deploy --target vercel\` or \`--target self\` to set a real host first.`,
-          );
-        }
-
-        // Developer identity is asked for ONCE. The first push writes it into
-        // the manifest, so every later version of the same app reuses it and
-        // the developer never re-types it.
-        const developerName =
-          opts.developerName ?? manifest.developer_name;
-        const developerEmail =
-          opts.developerEmail ?? manifest.developer_email;
-        const sourceUrl = opts.sourceUrl ?? manifest.source_url;
-
-        if (!developerName || !developerEmail) {
-          throw new Error(
-            'First submission needs developer_name and developer_email. ' +
-              'Pass --developer-name / --developer-email once — they are saved to ' +
-              'flashmandu.app.toml and reused for every later push.',
-          );
-        }
-
         // Each push is a NEW version for review; resubmitting the same one
         // leaves the operator unable to tell the builds apart. Bump the patch
         // by default, and persist it so the manifest and the marketplace agree.
         const submittedVersion =
           opts.version ?? (opts.bump === false ? manifest.version : bumpPatch(manifest.version));
-
-        const description = opts.description ?? manifest.description ?? '';
 
         if (!opts.yes) {
           const { confirm } = await import('@inquirer/prompts');
@@ -107,45 +65,31 @@ export function makePushCommand(): Command {
           }
         }
 
+        // Developer identity is asked for ONCE. The first push writes it into
+        // the manifest, so every later version of the same app reuses it and
+        // the developer never re-types it. `submitAppForReview` validates that
+        // both are present; here we only resolve them for persistence below.
+        const developerName = opts.developerName ?? manifest.developer_name;
+        const developerEmail = opts.developerEmail ?? manifest.developer_email;
+
         const spinner = ora('Submitting…').start();
         try {
-          const res = await post<SubmissionResponse>(
-            '/api/apps/app-submissions',
-            {
-              developer_name: developerName,
-              developer_email: developerEmail,
-              // Leaf slug only — the platform namespaces it under the
-              // developer's publisher handle so ids match installed apps
-              // (`owner-1/interactive-map`) and cannot collide across devs.
-              app_id: manifest.slug,
-              name: manifest.name,
-              provider_class: manifest.provider_class,
-              source_url: sourceUrl,
-              description,
-              // A remote app is installed over OAuth and contributes blocks /
-              // nav items. Without these the platform had nothing to list or
-              // install with, so approving a pushed app did nothing at all.
-              authorize_url: manifest.authorize_url,
-              token_url: manifest.token_url,
-              webhook_url: manifest.webhook_url,
-              version: submittedVersion,
-              scopes: manifest.scopes ?? [],
-              subscribed_events: manifest.subscribed_events ?? [],
-              embed_blocks: manifest.embed_blocks ?? [],
-              nav_items: manifest.nav_items ?? [],
-            },
-            // Submission is the open, throttled endpoint (no Bearer required);
-            // but if a token is present it's still sent (harmless, and lets
-            // the dev-box attribute the submission).
-            { noAuth: true },
-          );
-          spinner.succeed(chalk.green(`Submitted (id #${res.id}, status: ${res.status}).`));
+          const res = await submitAppForReview(manifest, {
+            version: submittedVersion,
+            developerName: opts.developerName,
+            developerEmail: opts.developerEmail,
+            sourceUrl: opts.sourceUrl,
+            description: opts.description,
+          });
+          spinner.succeed(chalk.green(`Submitted (id #${res.id}).`));
           // Persist only AFTER the submission is accepted, so a failed push
-          // does not burn a version number or record an unused identity.
+          // does not burn a version number or record an unused identity. The
+          // non-null assertions are sound: `submitAppForReview` resolves these
+          // the same way and has already thrown if either was missing.
           await updateManifestFields(path.resolve(opts.dir), {
             version: submittedVersion,
-            developer_name: developerName,
-            developer_email: developerEmail,
+            developer_name: developerName!,
+            developer_email: developerEmail!,
           });
           if (submittedVersion !== manifest.version) {
             console.log(chalk.dim(`  Version bumped ${manifest.version} -> ${submittedVersion} in flashmandu.app.toml`));
