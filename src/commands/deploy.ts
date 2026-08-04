@@ -113,7 +113,7 @@ export function makeDeployCommand(): Command {
         // helper's placeholder-URL check sees the just-persisted platform URLs
         // (the manifest read at the top still carries the originals, which for
         // a first deploy of a fresh template are APP-HOST placeholders).
-        await submitAppForReview({ ...manifest, ...urls }, { version });
+        await submitAppForReview({ ...manifest, ...urls, hosting_target: 'platform', image_digest: digest }, { version });
 
         // Persist the version + digest only after the submission succeeds, so a
         // failed submit does not burn a version number (mirrors `push`).

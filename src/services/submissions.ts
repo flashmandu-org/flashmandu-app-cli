@@ -58,6 +58,10 @@ export async function submitAppForReview(
       subscribed_events: manifest.subscribed_events ?? [],
       embed_blocks: manifest.embed_blocks ?? [],
       nav_items: manifest.nav_items ?? [],
+      // Platform-hosted apps: carry the hosting decision + image digest so the
+      // platform knows to deploy to k3s (not treat it as a self-hosted remote).
+      hosting_target: manifest.hosting_target,
+      image_digest: manifest.image_digest,
     },
   );
 }
