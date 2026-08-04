@@ -40,6 +40,24 @@ set -a; source <(jq -r 'to_entries[]|"\(.key|ascii_upcase)=\(.value|@sh)"' \
 npm run dev
 ```
 
+## Platform deploys (migrations + seeding)
+
+The bundled `Dockerfile` is what `flashmandu-app deploy --target platform`
+builds and pushes. On every pod boot, `docker-entrypoint.sh` runs **before**
+the server accepts traffic:
+
+1. `prisma migrate deploy` — only when the app ships `prisma/schema.prisma`.
+2. `npm run db:seed --if-present` — a no-op unless the app defines a `db:seed`
+   script. Seed scripts must be **idempotent** (upsert / skip existing rows);
+   this runs on every boot, including replicas and restarts.
+3. `npm run start` — any failed step aborts the boot (`set -e`), so a pod that
+   could not reach the schema its code expects crash-loops visibly instead of
+   serving broken data.
+
+Because the boot sequence lives in the image, each `deploy` (which auto-bumps
+the patch version in `flashmandu.app.toml`) ships its migrations and seed
+together with the code that needs them.
+
 ## OAuth + webhook contract
 
 See `flashmandu.app.toml` for the URL wiring. The platform:
