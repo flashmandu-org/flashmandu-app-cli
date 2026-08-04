@@ -36,6 +36,10 @@ export async function submitAppForReview(
     );
   }
 
+  // Authenticated: the server resolves the developer identity from the bearer
+  // token (not the manifest's developer_email, which may be a template
+  // placeholder). This is what makes the publisher handle match the logged-in
+  // user, not the manifest default.
   return post<SubmitResult>(
     '/api/apps/app-submissions',
     {
@@ -55,6 +59,5 @@ export async function submitAppForReview(
       embed_blocks: manifest.embed_blocks ?? [],
       nav_items: manifest.nav_items ?? [],
     },
-    { noAuth: true },
   );
 }
