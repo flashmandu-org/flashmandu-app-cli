@@ -87,7 +87,10 @@ export function makeDeployCommand(): Command {
             stdio: ['pipe', 'pipe', 'pipe'],
             input: registryPassword,
           });
-          execFileSync('docker', ['build', '-t', repo, '.'], { cwd: dir, stdio: 'pipe' });
+          // Build for linux/amd64 — the tenant cluster runs on x86_64. Building
+          // on Apple Silicon without --platform produces an arm64-only image that
+          // k3s cannot run ("no match for platform in manifest").
+          execFileSync('docker', ['build', '--platform', 'linux/amd64', '-t', repo, '.'], { cwd: dir, stdio: 'pipe' });
           execFileSync('docker', ['push', repo], { cwd: dir, stdio: 'pipe' });
         } catch (err) {
           spinner.fail('Docker build/push failed.');
