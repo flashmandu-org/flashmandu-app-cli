@@ -8,7 +8,10 @@ authorize_url = "https://APP-HOST/oauth/authorize"
 token_url = "https://APP-HOST/oauth/token"
 webhook_url = "https://APP-HOST/webhooks/flashmandu"
 
-scopes = ["ReadOrders"]
+# Platform scopes are `<verb>:<resource>`, lowercase — the VALUES of the SDK's
+# `Flashmandu\AppSdk\Scope` enum, not its case names. `Scope::ReadOrders->value`
+# is what belongs here.
+scopes = ["read:orders"]
 
 developer_name = "Your Name"
 developer_email = "you@example.com"

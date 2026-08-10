@@ -20,7 +20,28 @@ import { validateSchedules, type ScheduleEntry } from './schedules';
  * if `slug` is absent, the leaf after any `/` is used as the slug.
  */
 
-const SCOPE_RE = /^[A-Z][A-Za-z0-9]*$/;
+/**
+ * A platform scope, as the platform actually spells it: `<verb>:<resource>`,
+ * lowercase.
+ *
+ * The values are the VALUES of the host's `Flashmandu\Apps\Ports\PortScope`
+ * (and the SDK's `Flashmandu\AppSdk\Scope`, which mirrors it) — `read:media`,
+ * `write:locations`, `send:notifications`, `broadcast:events`,
+ * `manage:storefront`, and so on. This regex previously read
+ * `/^[A-Z][A-Za-z0-9]*$/`, which is the shape of an enum CASE NAME (`ReadMedia`)
+ * rather than its value, so `flashmandu.app.toml` was rejected with
+ * `scopes.0: Invalid` for every app that declared a real scope — which is every
+ * app that does anything. `dev`, `push` and `deploy` all validate the manifest
+ * first, so the bug blocked all three.
+ *
+ * Deliberately a SHAPE check and not an allow-list of the ~20 known values: the
+ * host owns the catalog and adds to it, and a CLI that hard-codes the list
+ * would start rejecting valid manifests the day a scope ships. The host
+ * validates membership at register time, which is the right place for it. The
+ * hyphen branch is forward-tolerance for a future multi-word resource
+ * (`read:price-lists`); nothing in the catalog uses one today.
+ */
+const SCOPE_RE = /^[a-z]+:[a-z]+(-[a-z]+)*$/;
 
 /**
  * App slugs are the developer-chosen leaf of the canonical
