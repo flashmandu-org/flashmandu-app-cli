@@ -52,7 +52,7 @@ export function makeDeployCommand(): Command {
       // this deploy submits. A `[webhooks].url` declared in the toml outranks
       // the URL derived from the hosting target — say so rather than silently
       // deploying to one host and delivering webhooks to another.
-      printAppConfigSync(manifest);
+      printAppConfigSync(manifest, 'not-applied');
       if (manifest.webhooks?.url) {
         console.log(
           chalk.dim(

@@ -48,7 +48,7 @@ export function makePushCommand(): Command {
 
         const manifest = await readManifest(path.resolve(opts.dir));
         await warnOnBridgeVersionFloor(path.resolve(opts.dir));
-        printAppConfigSync(manifest);
+        printAppConfigSync(manifest, 'not-applied');
 
         // Each push is a NEW version for review; resubmitting the same one
         // leaves the operator unable to tell the builds apart. Bump the patch

@@ -40,12 +40,11 @@ export interface DevRegisterRequest {
   extensions?: unknown[];
   /** App-declared sidebar nav items (Spec #2 §S6). */
   nav_items?: unknown[];
-  /**
-   * Declarative `[[schedules]]` from the manifest. Stored per install; the
-   * platform's Horizon scheduler turns each into a signed `schedule.tick`
-   * webhook. Additive — a host that predates schedules ignores the key.
-   */
-  schedules?: Array<{ name: string; every?: string; interval_seconds?: number; cron?: string }>;
+  // NOTE: `[[schedules]]` deliberately has NO field here. This endpoint never
+  // validated (and therefore never read) a `schedules` key, so sending one was
+  // a silent no-op that made declarations look synced while
+  // `GET /api/apps/schedules` stayed empty. Schedules go to
+  // `POST /api/apps/schedules/sync` — see appSync.syncManifestSchedules.
 }
 
 export interface DevRegisterResponse {

@@ -197,7 +197,61 @@ export const ENDPOINTS = {
   secrets: '/api/apps/hosted-secrets',
   /** Runtime capabilities, including the supported bridge version floor. */
   capabilities: '/api/apps/capabilities',
+  /**
+   * Declared `[[schedules]]` (capability spec §5). `sync` REPLACES the calling
+   * app's declarations across every enabled install; `read` returns them with
+   * their platform-side health. Both are scoped to the bearer-resolved app, so
+   * they must be called with the APP's own api_token — the developer login
+   * token resolves to the dev/cli app, which is a different app id.
+   */
+  schedulesSync: '/api/apps/schedules/sync',
+  schedules: '/api/apps/schedules',
 } as const;
+
+/**
+ * One schedule as the platform reports it back (`AppSchedule::toCliArray()`).
+ * Exactly one of `every` / `cron` is non-null. `state` becomes "disabled" with
+ * a `disabled_reason` after the platform gives up on repeatedly failing ticks,
+ * which is the whole reason the CLI reads schedules back instead of echoing
+ * the manifest.
+ */
+export interface ScheduleRecord {
+  name: string;
+  every: string | null;
+  cron: string | null;
+  timezone: string | null;
+  state: string;
+  disabled_reason: string | null;
+  failure_count?: number;
+  next_run_at?: string | null;
+  last_run_at?: string | null;
+}
+
+export interface ScheduleSyncResult {
+  app_id: string;
+  /** Number of enabled installs the declarations were materialized onto. */
+  installs: number;
+  schedules: ScheduleRecord[];
+}
+
+/**
+ * Replace the app's declared schedules from its manifest.
+ *
+ * `token` MUST be the app's own api_token (from the `dev` register response or
+ * `.flashmandu/sandbox-secrets.*.json`); the platform derives the target app id
+ * from the bearer, so passing the login token would sync onto the wrong app.
+ */
+export function syncSchedules(
+  schedules: Array<{ name: string; every?: string; interval_seconds?: number; cron?: string }>,
+  token: string,
+): Promise<ScheduleSyncResult> {
+  return post<ScheduleSyncResult>(ENDPOINTS.schedulesSync, { schedules }, { token });
+}
+
+/** Read back the app's schedules and their current health. */
+export function fetchSchedules(token: string): Promise<{ schedules: ScheduleRecord[] }> {
+  return get<{ schedules: ScheduleRecord[] }>(ENDPOINTS.schedules, { token });
+}
 
 /**
  * One recorded webhook delivery attempt.

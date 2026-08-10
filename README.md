@@ -56,7 +56,14 @@ autohisab-business push
 
 `flashmandu.app.toml` is the single source of truth for both. Nothing else
 writes an app's subscription or its schedules, so what is in the file is what
-the platform has after the next `dev` / `push` / `deploy`.
+the platform has after the next sync.
+
+- **`[webhooks]`** is synced by `dev` (register) and by `push` / `deploy` (submission).
+- **`[[schedules]]`** is synced by **`dev` only**, via `POST /api/apps/schedules/sync`,
+  authenticated as the app itself. The platform materializes schedules per
+  *enabled install*, and a marketplace submission has none yet — so `push` /
+  `deploy` print your schedule blocks with a warning that they are declared but
+  not applied, rather than implying they are live.
 
 ```toml
 [webhooks]
@@ -84,6 +91,12 @@ Platform rules, enforced by the CLI before anything is sent:
 - at most **5 schedules** per app;
 - names unique per app (the tick payload identifies the schedule by name);
 - `every` **or** `cron`, never both.
+
+The platform re-checks all of them at sync time and rejects the whole batch on
+the first bad block; the CLI names the offending `[[schedules]]` entry and
+fails the `dev` run rather than printing a green line over an empty schedule
+list. `autohisab-business dev` echoes back what the *platform* stored — not
+what your toml says — so the two can never silently disagree.
 
 Legacy top-level `subscribed_events` still works, but when both are present
 `[webhooks].events` wins and the CLI says so.
@@ -147,8 +160,14 @@ Every one of these lives in `src/services/apiClient.ts` (see `ENDPOINTS`), so a
 host contract change is a one-file edit.
 
 `POST /api/apps/dev/register` and `POST /api/apps/app-submissions` additionally
-carry `subscribed_events` (resolved from `[webhooks]`) and `schedules`
-(`[{ name, every, interval_seconds }]` or `[{ name, cron }]`).
+carry `subscribed_events` (resolved from `[webhooks]`).
+
+`[[schedules]]` go to `POST /api/apps/schedules/sync` as
+`{ schedules: [{ name, every, interval_seconds } | { name, cron }] }`, and are
+read back from `GET /api/apps/schedules`. Both are scoped to the **bearer**, so
+they must be called with the app's own `api_token` (from the `dev` register
+response / `.flashmandu/sandbox-secrets.*.json`) — the developer login token
+resolves to the dev/cli app, which is a different app id.
 
 ### Webhook signature (must verify in your app)
 

@@ -174,6 +174,64 @@ export function toWireSchedules(
   });
 }
 
+/**
+ * Turn a failed `POST /api/apps/schedules/sync` into an error a developer can
+ * act on without opening the network tab.
+ *
+ * The platform reports validation problems keyed by position
+ * (`schedules.1.cron`), which is meaningless on its own — the developer wrote
+ * a NAME, not an index. `sent` is the wire list in the order it was posted, so
+ * each key is resolved back to the `[[schedules]]` block that caused it.
+ *
+ * Anything that is not a keyed 422 (network error, 401, 500) falls through to
+ * the underlying message: a sync failure is never swallowed or summarized into
+ * "something went wrong".
+ */
+export function formatScheduleSyncFailure(err: unknown, sent: Array<{ name: string }>): string {
+  const body = (err as { body?: unknown } | undefined)?.body;
+  const errors =
+    typeof body === 'object' && body !== null && 'errors' in body
+      ? (body as { errors?: Record<string, string[] | string> }).errors
+      : undefined;
+
+  const fallback = err instanceof Error ? err.message : String(err);
+
+  if (!errors || typeof errors !== 'object') {
+    return `The platform rejected the schedule sync: ${fallback}`;
+  }
+
+  const lines: string[] = [];
+  for (const [key, raw] of Object.entries(errors)) {
+    const messages = Array.isArray(raw) ? raw : [String(raw)];
+    // `schedules`, `schedules.0`, or `schedules.0.cron`.
+    const match = /^schedules(?:\.(\d+))?(?:\.(\w+))?$/.exec(key);
+    let where = key;
+    if (match) {
+      if (match[1] === undefined) {
+        where = '[[schedules]]';
+      } else {
+        const index = Number.parseInt(match[1], 10);
+        const name = sent[index]?.name ?? '?';
+        const field = match[2] ? ` \`${match[2]}\`` : '';
+        where = `[[schedules]] #${index + 1} ("${name}")${field}`;
+      }
+    }
+    for (const message of messages) {
+      lines.push(`  ${where}: ${message}`);
+    }
+  }
+
+  if (lines.length === 0) {
+    return `The platform rejected the schedule sync: ${fallback}`;
+  }
+
+  return (
+    'The platform rejected the schedules declared in flashmandu.app.toml:\n' +
+    lines.join('\n') +
+    '\n  Fix the block(s) above and re-run — your schedules are NOT live until this sync succeeds.'
+  );
+}
+
 /** One-line human summary used by `dev`/`push` output. */
 export function describeSchedule(schedule: ScheduleEntry): string {
   const cadence =

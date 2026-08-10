@@ -14,6 +14,8 @@ import { getActive } from '../services/credentials';
 import {
   buildAppConfigSync,
   printAppConfigSync,
+  printSyncedSchedules,
+  syncManifestSchedules,
   warnOnBridgeVersionFloor,
 } from '../services/appSync';
 
@@ -412,9 +414,15 @@ export function makeDevCommand(): Command {
             order: n.order,
           }));
 
-          // Declarative `[webhooks]` + `[[schedules]]` are synced on every
-          // register: the toml is the single source of truth and the CLI is
-          // its only writer.
+          // Declarative `[webhooks]` is synced on every register: the toml is
+          // the single source of truth and the CLI is its only writer.
+          //
+          // `[[schedules]]` deliberately does NOT ride along here. This payload
+          // used to carry a `schedules` key that the host never validated, so
+          // Laravel's validate() dropped it and the declarations silently never
+          // reached the platform. They now go to the endpoint that actually
+          // owns them (`POST /api/apps/schedules/sync`), after registration,
+          // authenticated as the app itself — see syncManifestSchedules.
           const sync = buildAppConfigSync(manifest);
 
           return registerSandbox({
@@ -431,18 +439,17 @@ export function makeDevCommand(): Command {
             subscribed_events: sync.subscribed_events,
             extensions,
             nav_items: navItems,
-            schedules: sync.schedules,
           });
         };
 
-        const doRegister = async (): Promise<void> => {
+        const doRegister = async (): Promise<DevRegisterResponse> => {
           spinner.start('Registering sandbox with dev-box…');
           try {
             const reg = await registerOnce(currentHost);
             canonicalAppId = reg.app_id;
             spinner.succeed(chalk.green('Sandbox registered.'));
             await printSecretsBanner(reg, currentHost);
-            printAppConfigSync(manifest);
+            printAppConfigSync(manifest, 'synced-separately');
 
             const profile = await getActive();
             const file = path.join(
@@ -466,6 +473,8 @@ export function makeDevCommand(): Command {
                 '  Point your app at FLASHMANDU_API_TOKEN / FLASHMANDU_WEBHOOK_SECRET (see .flashmandu/).',
               ),
             );
+
+            return reg;
           } catch (err) {
             spinner.fail('Dev registration failed.');
             await cleanup(tunnel);
@@ -473,7 +482,23 @@ export function makeDevCommand(): Command {
           }
         };
 
-        await doRegister();
+        const reg = await doRegister();
+
+        // 5b. Sync `[[schedules]]`. Separate step, separate failure: the app is
+        // registered and usable at this point, but its schedules are not live
+        // until this succeeds — so a rejection must stop the dev loop with the
+        // offending block named, never a green line over an empty schedule
+        // list.
+        spinner.start('Syncing schedules…');
+        try {
+          const synced = await syncManifestSchedules(manifest, reg.api_token);
+          spinner.stop();
+          printSyncedSchedules(manifest, synced);
+        } catch (err) {
+          spinner.fail('Schedule sync failed — your [[schedules]] are NOT live.');
+          await cleanup(tunnel);
+          throw err;
+        }
 
         // 6. Open the browser at the dev-box page for the freshly-registered
         // app. Default is the embed shell (/apps/{appId}/embed), which frames
