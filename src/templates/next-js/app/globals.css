@@ -1,163 +1,72 @@
 /**
  * Global stylesheet for the Flashmandu Next.js app template.
  *
- * Imports the App Bridge UI tokens (the --fm-* custom properties that mirror
- * the host platform's Flux UI look) plus the tiny opt-in component classes
- * shipped by @flashmandu/app-bridge-ui. Theme + dark-mode overrides propagate
- * for free because every rule below consumes the --fm-* tokens.
+ * THE ONE RULE: this file overrides NOTHING the kit defines.
+ *
+ * `@flashmandu/app-bridge-ui` owns every `.fm-*` class and every `--fm-*`
+ * token. Because this file is imported AFTER the kit's stylesheets, any rule
+ * here with the same selector wins at equal specificity — silently, with no
+ * error, from the app's very first commit. That is exactly how the template
+ * used to ship: it redefined `.fm-container` at `max-width: 880px` with no
+ * page gutter and `.fm-card` at 20px padding, so a freshly scaffolded app
+ * rendered as a narrow centred reading column while the host it was framed in
+ * rendered full-bleed content in a 1280px main with 16/24px gutters. Every app
+ * scaffolded from the template inherited that mismatch.
+ *
+ * So: no `.fm-*` selector below this line, ever. A CLI test enforces it.
+ *
+ * WHAT BELONGS HERE
+ *   - the document reset (margin, box-sizing, base colours off kit tokens)
+ *   - app-local classes, under the `app-` prefix so they can never collide
+ *
+ * WHAT DOES NOT
+ *   - restyling a kit class → use the kit's own modifier (`.fm-card--sm`,
+ *     `.fm-container--narrow`, `.fm-container--bleed`) or compose primitives
+ *   - a different look for a token → override the TOKEN (`--fm-radius`,
+ *     `--fm-font-sans`), which is the supported seam and themes cleanly
+ *   - a webfont → the kit self-hosts the platform typeface (Instrument Sans)
+ *     and points `--fm-font-sans` at it. Do not add a Google Fonts @import.
+ *   - a style the kit genuinely lacks → that is a kit gap. File it against
+ *     @flashmandu/app-bridge-ui instead of patching around it here; a local
+ *     patch drifts away from the host on the next kit release.
  */
 @import "@flashmandu/app-bridge-ui/dist/tokens.css";
 @import "@flashmandu/app-bridge-ui/dist/components.css";
 
+* {
+  box-sizing: border-box;
+}
+
 html,
 body {
+  margin: 0;
+  padding: 0;
   background: var(--fm-bg);
   color: var(--fm-text);
   font-family: var(--fm-font-sans);
   font-size: var(--fm-text-base);
   line-height: var(--fm-leading);
   -webkit-font-smoothing: antialiased;
-  margin: 0;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-* {
-  box-sizing: border-box;
-}
-
-code {
+code,
+pre {
   font-family: var(--fm-font-mono);
   font-size: 0.85em;
 }
 
-.fm-app-shell {
-  min-height: 100vh;
-  padding: var(--fm-space-6);
-}
-
-.fm-container {
-  max-width: 880px;
-  margin: 0 auto;
+/**
+ * Storefront embed block shell (`app/embed/[type]`).
+ *
+ * A storefront block is NOT an admin page: it sits in a sandboxed iframe the
+ * merchant sized in the page builder, so it gets no `.fm-container` — no
+ * 1280px cap, no page gutter — just breathing room off the iframe edge.
+ */
+.app-embed-shell {
+  min-height: 100%;
+  padding: var(--fm-space-4);
   display: flex;
   flex-direction: column;
-  gap: var(--fm-space-5);
-}
-
-.fm-app-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--fm-space-4);
-  padding-bottom: var(--fm-space-4);
-  border-bottom: 1px solid var(--fm-border);
-}
-
-.fm-app-title {
-  font-size: var(--fm-text-lg);
-  font-weight: 700;
-  margin: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--fm-space-2);
-}
-
-.fm-nav {
-  display: flex;
-  gap: var(--fm-space-2);
-}
-
-.fm-nav a {
-  color: var(--fm-text-muted);
-  text-decoration: none;
-  font-size: var(--fm-text-sm);
-  padding: var(--fm-space-2) var(--fm-space-3);
-  border-radius: var(--fm-radius-md);
-}
-
-.fm-nav a:hover {
-  background: var(--fm-surface-muted);
-  color: var(--fm-text);
-}
-
-.fm-card {
-  background: var(--fm-surface);
-  border: 1px solid var(--fm-border);
-  border-radius: var(--fm-radius);
-  padding: var(--fm-space-5);
-  box-shadow: var(--fm-shadow-sm);
-}
-
-.fm-card h2 {
-  margin: 0 0 var(--fm-space-3);
-  font-size: var(--fm-text-base);
-  font-weight: 600;
-}
-
-.fm-kv {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: var(--fm-space-2) var(--fm-space-4);
-  font-size: var(--fm-text-sm);
-  margin: 0;
-}
-
-.fm-kv dt {
-  color: var(--fm-text-muted);
-}
-
-.fm-kv dd {
-  margin: 0;
-  font-family: var(--fm-font-mono);
-  word-break: break-all;
-}
-
-.fm-chip {
-  display: inline-block;
-  font-family: var(--fm-font-mono);
-  font-size: var(--fm-text-xs);
-  padding: 2px var(--fm-space-2);
-  border-radius: var(--fm-radius-pill);
-  background: var(--fm-primary-subtle);
-  color: var(--fm-primary);
-  margin: 2px;
-}
-
-.fm-muted {
-  color: var(--fm-text-muted);
-  font-size: var(--fm-text-sm);
-}
-
-.fm-events {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--fm-space-2);
-  max-height: 320px;
-  overflow: auto;
-}
-
-.fm-event {
-  display: grid;
-  grid-template-columns: max-content 1fr max-content;
   gap: var(--fm-space-3);
-  align-items: baseline;
-  font-size: var(--fm-text-sm);
-  padding: var(--fm-space-2) var(--fm-space-3);
-  background: var(--fm-surface-muted);
-  border-radius: var(--fm-radius-sm);
-}
-
-.fm-event time {
-  color: var(--fm-text-muted);
-  font-family: var(--fm-font-mono);
-}
-
-.fm-event .name {
-  font-weight: 600;
-  font-family: var(--fm-font-mono);
-}
-
-.fm-event code {
-  color: var(--fm-text-muted);
 }

@@ -58,7 +58,7 @@ export function EmbedBlockClient({ type, verify }: {
   }, []);
 
   return (
-    <div className="fm-app-shell" style={{ minHeight: '100%' }}>
+    <div className="app-embed-shell">
       <div className="fm-card">
         <h2 className="fm-card__title">Embed Block: {type}</h2>
 
@@ -88,7 +88,7 @@ export function EmbedBlockClient({ type, verify }: {
         )}
       </div>
 
-      <div className="fm-card" style={{ marginTop: 12 }}>
+      <div className="fm-card">
         <CounterControl />
       </div>
     </div>
