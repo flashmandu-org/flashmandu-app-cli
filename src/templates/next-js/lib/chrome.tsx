@@ -29,7 +29,17 @@ export interface AppPageProps {
    * that rather than wrapping the command bar.
    */
   crumbs?: PageCrumb[];
-  /** Command-bar buttons. Max 4; each carries its own handler. */
+  /**
+   * Command-bar buttons. Max 4; each carries its own handler.
+   *
+   * SCOPE (product decision, 2026-08-11): the host command bar carries the
+   * dirty-state FORM PAIR only — Save / Discard / Cancel. Create, Preview and
+   * cross-surface navigation render IN THE PAGE, top-right, above the content,
+   * where the host's own index pages put them; see `app/items/page.tsx`. A
+   * "New …" button published here reads as chrome rather than as an action on
+   * what the merchant is looking at, and on mobile it is the only thing the
+   * merchant can see of the page.
+   */
   actions?: PageChromeAction[];
   /** Unsaved changes: the host swaps its bar for native Save/Discard. */
   dirty?: boolean;
