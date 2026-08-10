@@ -5,6 +5,7 @@ import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { createServer } from 'node:net';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { buildExtensionPayload } from '../services/extensions';
 import { readManifest, MANIFEST_FILENAME } from '../services/manifest';
 import { scaffoldApp } from './init';
 import { confirm } from '@inquirer/prompts';
@@ -370,40 +371,15 @@ export function makeDevCommand(): Command {
         // the secrets file, embed URL, and logs going forward.
         let canonicalAppId = manifest.id ?? manifest.slug;
         const registerOnce = async (host: string): Promise<DevRegisterResponse> => {
-          // Serialize embed blocks into the `extensions` payload the host
-          // persists on installed_apps.extensions. The live tunnel origin is
-          // injected as block_origin (the TOML declares only block_path), and
-          // each setting's dynamic_options_* pair is normalized into the
+          // Serialize every UI declaration — `[[extensions]]` (unified or
+          // flat) and `[[embed_blocks]]` — into the ONE unified payload the
+          // host's ExtensionManifestReader reads. The live tunnel origin is
+          // injected as block_origin (the TOML declares only a path), and each
+          // setting's dynamic_options_* pair is normalized into the
           // {source,path} object EmbedBlockCatalog + the inspector expect.
-          const extensions = (manifest.embed_blocks ?? []).map((b) => ({
-            type: b.type,
-            name: b.name,
-            description: b.description,
-            category: b.category,
-            icon: b.icon,
-            hosting_tier: b.hosting_tier ?? 'remote',
-            block_origin: host,
-            block_path: b.block_path,
-            capabilities: b.capabilities ?? [],
-            scopes: b.scopes ?? [],
-            schema_version: b.schema_version ?? 1,
-            settings: (b.settings ?? []).map((s) => ({
-              name: s.name,
-              label: s.label,
-              type: s.type,
-              required: s.required,
-              help: s.help,
-              default: s.default,
-              options: s.options,
-              dynamic_options:
-                s.dynamic_options_source || s.dynamic_options_path
-                  ? {
-                      source: s.dynamic_options_source ?? 'app',
-                      path: s.dynamic_options_path ?? '',
-                    }
-                  : undefined,
-            })),
-          }));
+          // See services/extensions.ts for why a desugared embed block keeps
+          // its legacy keys alongside the unified ones.
+          const extensions = buildExtensionPayload(manifest, host);
 
           // App-declared sidebar nav items (Spec #2 §S6). Forwarded to the
           // host so it can render them in the storefront sidebar.

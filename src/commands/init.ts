@@ -34,6 +34,41 @@ const TEMPLATES: Record<TemplateName, { label: string; description: string }> = 
  * `TOML.stringify` drops comments, so the guidance is appended as text — a
  * developer must be able to discover schedules without reading the docs.
  */
+
+const EXTENSIONS_HINT = `
+# ── UI extensions ────────────────────────────────────────────────────────────
+# ONE table for every host surface. Each [[extensions]] block is one extension;
+# each [[extensions.targeting]] block under it is one place that extension
+# renders. A single extension can therefore serve an admin block, a POS action
+# and a storefront section from one codebase — declare it once, target it three
+# times.
+#
+#   handle       stable key for this extension. The merchant's on/off toggle is
+#                stored against it, so renaming it resets their placement.
+#   api_version  calendar version of the extension contract you built against.
+#   mode         block | iframe | render-spec. \`iframe\` serves \`path\` from your
+#                app's origin inside a sandboxed frame; \`block\` is first-party
+#                in-process PHP only.
+#   capabilities what you ask the host for. The SURFACE decides what you get —
+#                anything it refuses is reported in the merchant's extension
+#                console rather than silently dropped.
+#
+# The legacy flat form (a bare \`target\` with no [[extensions.targeting]]) and
+# the [[embed_blocks]] table both still work; the CLI desugars them into this
+# shape before sending.
+#
+# [[extensions]]
+# handle      = "order-summary"
+# name        = "Order summary"
+# api_version = "2026-08"
+# capabilities = ["identity", "resize", "toast"]
+#
+#   [[extensions.targeting]]
+#   target = "admin.order.detail.block"
+#   mode   = "iframe"
+#   path   = "/embed/order-summary"
+`;
+
 const SCHEDULES_HINT = `
 # Platform-side cron. Each tick arrives as an ordinary signed webhook with
 # event \`schedule.tick\` and payload { schedule, profile_id, scheduled_at }.
@@ -188,10 +223,31 @@ export async function scaffoldApp(
     // and `dev`/`push`/`deploy` sync. Present-but-empty so the developer sees
     // where events go instead of guessing.
     webhooks: { events: [] },
+    // Only the next-js template actually SERVES an extension route
+    // (app/embed/[type]/page.tsx), so only it is scaffolded with a live
+    // declaration. Shipping one on php-remote — which serves a single
+    // public/index.php — would scaffold an app whose first extension 404s, and
+    // a broken example teaches worse than no example. The commented
+    // EXTENSIONS_HINT below documents the shape for both.
+    extensions:
+      template === 'next-js'
+        ? [
+            {
+              handle: 'hello-block',
+              name: 'Hello block',
+              description: 'A storefront section rendered by this app.',
+              api_version: '2026-08',
+              capabilities: ['identity', 'resize'],
+              targeting: [
+                { target: 'storefront.section', mode: 'iframe' as const, path: '/embed/hello' },
+              ],
+            },
+          ]
+        : undefined,
   };
   await fs.writeFile(
     path.join(target, 'flashmandu.app.toml'),
-    serializeManifest(manifest) + SCHEDULES_HINT,
+    serializeManifest(manifest) + EXTENSIONS_HINT + SCHEDULES_HINT,
     'utf8',
   );
 

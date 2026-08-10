@@ -33,3 +33,27 @@ events = ["order.status.changed"]
 # [[schedules]]
 # name  = "nightly-reconcile"
 # cron  = "0 2 * * *"
+
+# ── UI extensions ────────────────────────────────────────────────────────────
+# ONE table for every host surface. Each [[extensions]] block is one extension;
+# each [[extensions.targeting]] block under it is one place it renders — so a
+# single extension serves an admin block, a POS action and a storefront section
+# from one codebase.
+#
+# This template serves a single public/index.php and has no extension route, so
+# nothing is declared live. Add a route, then uncomment:
+#
+# [[extensions]]
+# handle       = "order-summary"
+# name         = "Order summary"
+# api_version  = "2026-08"
+# capabilities = ["identity", "resize", "toast"]
+#
+#   [[extensions.targeting]]
+#   target = "admin.order.detail.block"
+#   mode   = "iframe"          # block | iframe | render-spec
+#   path   = "/embed/order-summary"
+#
+# The legacy flat form (a bare `target` with no [[extensions.targeting]]) and
+# the [[embed_blocks]] table both still work — the CLI desugars them into the
+# unified shape above before sending, so nothing has to be rewritten.

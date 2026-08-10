@@ -95,8 +95,15 @@ export type AppManifest = {
    * A digest, never a tag — the platform refuses to approve a tag. */
   image_digest?: string;
   /** Optional App Embed Blocks declared in the manifest (Spec #1). Sent to the
-   * host at dev-register so it persists them on `installed_apps.extensions`. */
+   * host at dev-register so it persists them on `installed_apps.extensions`,
+   * desugared into the unified extension shape. */
   embed_blocks?: EmbedBlock[];
+  /**
+   * Unified `[[extensions]]` declarations — the one table for every host
+   * surface. Either shape is accepted (see {@link ManifestExtension}); the
+   * unified one is always what is sent.
+   */
+  extensions?: AnyManifestExtension[];
   /** App-declared sidebar nav items (Spec #2 §S6). Sent to the host at
    * dev-register so it renders them in the storefront sidebar. */
   nav_items?: NavItem[];
@@ -167,6 +174,98 @@ export interface EmbedBlock {
 }
 
 /**
+ * One `[[extensions.targeting]]` block: an extension saying "render me HERE,
+ * THIS way".
+ *
+ * Mirrors the host's `Flashmandu\Apps\Extensions\TargetBinding`. One
+ * extension may carry several — one extension, several surfaces, one codebase
+ * — which is the entire reason the unified shape exists: a loyalty app wants an
+ * admin block AND a POS action AND a storefront section without declaring
+ * itself three times.
+ */
+export interface ExtensionTargeting {
+  /** A host target string, e.g. `admin.order.detail.block`. */
+  target: string;
+  /** How the host renders it. Inferred by the host when omitted; declare it. */
+  mode?: 'block' | 'iframe' | 'render-spec';
+  /** Path under the app's origin (iframe / render-spec). */
+  path?: string;
+  /** Optional companion boolean endpoint that hides the block per resource. */
+  should_render?: string;
+  /** FQN/container key of an in-process BlockContribution (first-party only). */
+  block?: string;
+  /** Fully-resolved absolute URL, when the app serves this target elsewhere. */
+  remote_url?: string;
+}
+
+/**
+ * A unified `[[extensions]]` declaration — one manifest table for every surface
+ * (UI extension surfaces spec §3.3).
+ *
+ * The host reads this through
+ * `Flashmandu\Apps\Extensions\ExtensionDefinition::fromUnifiedPayload()`.
+ * Two older shapes desugar INTO it and are still accepted here:
+ *
+ *  - a FLAT `[[extensions]]` block (`target` at the top level, no `targeting`),
+ *    which is what the platform's REST register endpoint has always taken;
+ *  - `[[embed_blocks]]`, the storefront-flavoured special case.
+ *
+ * Both are rewritten into this shape by `buildExtensionPayload()` before they
+ * are sent, so the wire format is unified regardless of how the developer
+ * authored it.
+ */
+export interface ManifestExtension {
+  /** Stable key for this extension within the app. Its placement row's key. */
+  handle: string;
+  name?: string;
+  description?: string;
+  category?: string;
+  icon?: string;
+  /** Calendar API version, e.g. "2026-08". Defaults platform-side. */
+  api_version?: string;
+  targeting: ExtensionTargeting[];
+  /** Host capabilities requested. The SURFACE decides which are granted. */
+  capabilities?: string[];
+  /** Platform scopes required, as `<verb>:<resource>` values. */
+  scopes?: string[];
+  /** Port scopes required (same spelling; the host stores them together). */
+  port_scopes?: string[];
+  schema_version?: number;
+  replaces?: string;
+  /** 'remote' (default) or 'trusted' (platform-managed co-located origin). */
+  hosting_tier?: string;
+  /** Merchant-configurable fields, same shape as an embed block's. */
+  settings?: EmbedBlockSetting[];
+}
+
+/**
+ * The FLAT `[[extensions]]` block that predates `targeting`. Accepted so
+ * manifests in the wild keep working; desugared to a single-binding
+ * {@link ManifestExtension} on the way out.
+ */
+export interface FlatManifestExtension {
+  target: string;
+  handle?: string;
+  label?: string;
+  icon?: string;
+  api_version?: string;
+  mode?: 'block' | 'iframe' | 'render-spec';
+  path?: string;
+  should_render?: string;
+  block?: string;
+  remote_url?: string;
+  remoteUrl?: string;
+  scopes?: string[];
+  requiredScopes?: string[];
+  port_scopes?: string[];
+  requiredPortScopes?: string[];
+  capabilities?: string[];
+  settings?: EmbedBlockSetting[];
+}
+
+export type AnyManifestExtension = ManifestExtension | FlatManifestExtension;
+
+/**
  * A developer-declared sidebar nav entry under `[[nav_items]]` in the manifest
  * (Spec #2 §S6). The host renders these in the storefront sidebar for installed
  * apps. `path` is app-relative and must start with "/".
@@ -205,6 +304,78 @@ const EmbedBlockSchema = z.object({
   schema_version: z.number().int().min(1).default(1),
   settings: z.array(EmbedBlockSettingSchema).default([]),
 });
+
+/**
+ * Target strings are SHAPE-checked, never allow-listed. The host owns the
+ * vocabulary (`ExtensionTargets::all()` is the SDK enum plus host-only
+ * additions plus generated `should-render` companions) and adds to it; a CLI
+ * that hard-coded the list would start rejecting valid manifests the day a new
+ * surface ships. The host refuses an unknown target at hydration, which is the
+ * right place for it — same posture as SCOPE_RE.
+ */
+const TARGET_RE = /^[a-z][a-z0-9]*(\.[a-z0-9]+(-[a-z0-9]+)*)+$/;
+
+const ExtensionModeSchema = z.enum(['block', 'iframe', 'render-spec']);
+
+const TargetingSchema = z.object({
+  target: z.string().regex(TARGET_RE, 'target must look like "admin.order.detail.block"'),
+  mode: ExtensionModeSchema.optional(),
+  path: z.string().min(1).optional(),
+  should_render: z.string().min(1).optional(),
+  block: z.string().min(1).optional(),
+  remote_url: z.string().url().optional(),
+});
+
+const UnifiedExtensionSchema = z.object({
+  handle: z.string().min(1).max(96),
+  name: z.string().min(1).max(120).optional(),
+  description: z.string().max(1000).optional(),
+  category: z.string().max(60).optional(),
+  icon: z.string().max(60).optional(),
+  api_version: z.string().max(32).optional(),
+  targeting: z.array(TargetingSchema).min(1, 'an extension must declare at least one [[extensions.targeting]] block'),
+  capabilities: z.array(z.string().min(1)).default([]),
+  scopes: z.array(z.string().regex(SCOPE_RE)).default([]),
+  port_scopes: z.array(z.string().regex(SCOPE_RE)).default([]),
+  schema_version: z.number().int().min(1).default(1),
+  replaces: z.string().min(1).max(96).optional(),
+  hosting_tier: z.enum(['remote', 'trusted']).default('remote'),
+  settings: z.array(EmbedBlockSettingSchema).default([]),
+});
+
+/**
+ * The flat shape, kept working verbatim. `remoteUrl` / `requiredScopes` /
+ * `requiredPortScopes` are the camelCase spellings the host's
+ * `fromLegacyExtensionPayload()` reads, so both spellings are accepted rather
+ * than forcing a manifest edit on anyone who copied the payload format.
+ */
+const FlatExtensionSchema = z.object({
+  target: z.string().regex(TARGET_RE, 'target must look like "admin.order.detail.block"'),
+  handle: z.string().min(1).max(96).optional(),
+  label: z.string().max(120).optional(),
+  icon: z.string().max(60).optional(),
+  api_version: z.string().max(32).optional(),
+  mode: ExtensionModeSchema.optional(),
+  path: z.string().min(1).optional(),
+  should_render: z.string().min(1).optional(),
+  block: z.string().min(1).optional(),
+  remote_url: z.string().url().optional(),
+  remoteUrl: z.string().url().optional(),
+  scopes: z.array(z.string().regex(SCOPE_RE)).optional(),
+  requiredScopes: z.array(z.string().regex(SCOPE_RE)).optional(),
+  port_scopes: z.array(z.string().regex(SCOPE_RE)).optional(),
+  requiredPortScopes: z.array(z.string().regex(SCOPE_RE)).optional(),
+  capabilities: z.array(z.string().min(1)).optional(),
+  settings: z.array(EmbedBlockSettingSchema).optional(),
+});
+
+/**
+ * Discriminated by the presence of `targeting`, exactly as the host's
+ * `ExtensionManifestReader::hydrate()` discriminates the persisted payload.
+ * Keeping the two discriminators identical is what stops a manifest from
+ * parsing as one shape here and hydrating as the other there.
+ */
+const ExtensionSchema = z.union([UnifiedExtensionSchema, FlatExtensionSchema]);
 
 const NavItemSchema = z.object({
   label: z.string().min(1).max(80),
@@ -249,6 +420,7 @@ const ManifestInput = z.object({
     .regex(/^sha256:[0-9a-f]{64}$/, 'image_digest must be sha256:<64 hex> (a digest, never a tag)')
     .optional(),
   embed_blocks: z.array(EmbedBlockSchema).optional(),
+  extensions: z.array(ExtensionSchema).optional(),
   nav_items: z.array(NavItemSchema).optional(),
   webhooks: WebhooksSchema.optional(),
   // Deliberately uncapped here: the MAX_SCHEDULES rule is enforced in the
