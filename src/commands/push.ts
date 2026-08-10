@@ -4,9 +4,10 @@ import ora from 'ora';
 import path from 'node:path';
 import { bumpPatch, readManifest, updateManifestFields } from '../services/manifest';
 import { submitAppForReview } from '../services/submissions';
+import { printAppConfigSync, warnOnBridgeVersionFloor } from '../services/appSync';
 
 /**
- * `flashmandu-app push` — submit the app to the dev-box marketplace for
+ * `autohisab-business push` — submit the app to the dev-box marketplace for
  * operator review. Reserved verb: marketplace publish ONLY. It NEVER builds,
  * deploys, or touches a production host — use `deploy` for that. The submit
  * mechanics (placeholder-URL guard, identity validation, POST) live in
@@ -46,6 +47,8 @@ export function makePushCommand(): Command {
         }
 
         const manifest = await readManifest(path.resolve(opts.dir));
+        await warnOnBridgeVersionFloor(path.resolve(opts.dir));
+        printAppConfigSync(manifest);
 
         // Each push is a NEW version for review; resubmitting the same one
         // leaves the operator unable to tell the builds apart. Bump the patch
@@ -123,8 +126,8 @@ export function makePushCommand(): Command {
 export function pushTargetNotSupported(target: string): string {
   return (
     `\`push\` does not take --target (${target}). Hosting is chosen by ` +
-      `\`flashmandu-app deploy\` and recorded in the manifest as hosting_target; ` +
+      `\`autohisab-business deploy\` and recorded in the manifest as hosting_target; ` +
       `\`push\` only submits the app to the marketplace for review. ` +
-      `Run \`flashmandu-app deploy --target ${target}\` to set the host.`
+      `Run \`autohisab-business deploy --target ${target}\` to set the host.`
   );
 }

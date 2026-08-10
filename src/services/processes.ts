@@ -1,9 +1,9 @@
 import { execSync } from 'node:child_process';
 
 /**
- * Discovery + lifecycle for running `flashmandu-app dev` loops.
+ * Discovery + lifecycle for running `autohisab-business dev` loops.
  *
- * Each `dev` loop is a Node process (`flashmandu-app dev ...`) that owns an app
+ * Each `dev` loop is a Node process (`autohisab-business dev ...`) that owns an app
  * server (next/php) and a tunnel (cloudflared/ngrok). Stragglers happen when a
  * terminal is closed hard or a previous loop didn't clean up — they keep
  * holding ports and (for cloudflared) producing dead trycloudflare URLs. These
@@ -79,10 +79,10 @@ function cwdOf(pid: number): string | null {
   }
 }
 
-/** Running `flashmandu-app dev` loops. */
+/** Running `autohisab-business dev` loops. */
 export function listDevLoops(): DevLoop[] {
   return snapshot()
-    .filter((p) => /\bflashmandu-app\b/.test(p.command) && /\bdev\b/.test(p.command))
+    .filter((p) => /\b(flashmandu-app|autohisab-business)\b/.test(p.command) && /\bdev\b/.test(p.command))
     .map((p) => ({
       pid: p.pid,
       cwd: cwdOf(p.pid),
@@ -168,7 +168,7 @@ export function stopTunnelsForPort(port: number, force = false): number[] {
   return killed;
 }
 
-/** Stop everything flashmandu-app-related (dev loops + their tunnels). */
+/** Stop everything autohisab-business-related (dev loops + their tunnels). */
 export function stopAll(force = false): { loops: number[]; tunnels: number[] } {
   const loops = listDevLoops();
   const killedLoops: number[] = [];

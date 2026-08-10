@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Cut a new release of @flashmandu/app-cli.
+# Cut a new release of @flashmandu/autohisab-business-cli.
 #
 #   bin/release.sh 0.2.1
 #

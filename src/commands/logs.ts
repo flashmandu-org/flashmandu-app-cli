@@ -7,13 +7,13 @@ import { listDeliveries, type DeliveryRow } from '../services/devRegistrar';
 import { fetchPlatformLogs, formatPlatformLogs } from '../services/platformLogs';
 
 /**
- * `flashmandu-app logs` — show recent webhook deliveries the dev-box attempted
+ * `autohisab-business logs` — show recent webhook deliveries the dev-box attempted
  * against this app's sandbox. Reads `GET /api/apps/dev/deliveries`, which
  * derives the app identity from the bearer token.
  *
  * The developer login token resolves to the `dev/cli` app — not YOUR app — so
  * this command authenticates with the app's own api_token from
- * `.flashmandu/sandbox-secrets.<app>.json` (written by `flashmandu-app dev`)
+ * `.flashmandu/sandbox-secrets.<app>.json` (written by `autohisab-business dev`)
  * whenever it exists, falling back to the login token otherwise.
  *
  * With `--tail`, polls the endpoint every few seconds and prints new rows.
@@ -133,7 +133,7 @@ export function makeLogsCommand(): Command {
           console.log(
             chalk.dim(
               'No .flashmandu/sandbox-secrets file found — falling back to the login token. ' +
-                'Run `flashmandu-app dev` first for per-app delivery history.',
+                'Run `autohisab-business dev` first for per-app delivery history.',
             ),
           );
         }

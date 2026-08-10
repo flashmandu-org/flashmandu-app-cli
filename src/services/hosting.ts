@@ -10,7 +10,7 @@ export interface DeriveOptions {
   target?: HostingTarget;
   /** Leaf of `<publisher>/<slug>` — required when target is 'platform'. */
   slug?: string;
-  /** Hostname (or base URL) of the Flashmandu platform — required for 'platform'. */
+  /** Hostname (or base URL) of the AutoHisab Business platform — required for 'platform'. */
   platformHost?: string;
 }
 

@@ -10,21 +10,21 @@ import {
 } from '../services/processes';
 
 /**
- * `flashmandu-app ps` — list running `dev` loops and the tunnel processes they
+ * `autohisab-business ps` — list running `dev` loops and the tunnel processes they
  * own, so you can see what is holding a port and stop stragglers.
  *
- * `flashmandu-app stop` — stop one loop by pid, or everything with --all, or
+ * `autohisab-business stop` — stop one loop by pid, or everything with --all, or
  * whatever holds a port with --port.
  */
 export function makePsCommand(): Command {
   return new Command('ps')
-    .description('List running `flashmandu-app dev` loops, their ports, and tunnels.')
+    .description('List running `autohisab-business dev` loops, their ports, and tunnels.')
     .action(() => {
       const loops = listDevLoops();
       const tunnels = listTunnelProcesses();
 
       if (loops.length === 0 && tunnels.length === 0) {
-        console.log(chalk.dim('No flashmandu-app dev loops or tunnels running.'));
+        console.log(chalk.dim('No autohisab-business dev loops or tunnels running.'));
         return;
       }
 
@@ -54,9 +54,9 @@ export function makePsCommand(): Command {
 
       console.log(
         chalk.dim(
-          `\nStop with: ${chalk.reset('flashmandu-app stop <pid>')}` +
-            `  •  ${chalk.reset('flashmandu-app stop --port <n>')}` +
-            `  •  ${chalk.reset('flashmandu-app stop --all')}`,
+          `\nStop with: ${chalk.reset('autohisab-business stop <pid>')}` +
+            `  •  ${chalk.reset('autohisab-business stop --port <n>')}` +
+            `  •  ${chalk.reset('autohisab-business stop --all')}`,
         ),
       );
     });
@@ -64,7 +64,7 @@ export function makePsCommand(): Command {
 
 export function makeStopCommand(): Command {
   return new Command('stop')
-    .description('Stop running `flashmandu-app dev` loops and their tunnels (free ports).')
+    .description('Stop running `autohisab-business dev` loops and their tunnels (free ports).')
     .argument('[pid]', 'PID of a dev loop to stop')
     .option('-a, --all', 'Stop every dev loop + tunnel')
     .option('-p, --port <n>', 'Stop whatever dev loop + tunnel holds this port')
@@ -117,7 +117,7 @@ export function makeStopCommand(): Command {
       }
 
       console.error(
-        chalk.red('Specify a pid, --all, or --port <n>. See `flashmandu-app stop --help`.'),
+        chalk.red('Specify a pid, --all, or --port <n>. See `autohisab-business stop --help`.'),
       );
       process.exitCode = 1;
     });

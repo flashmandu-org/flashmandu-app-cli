@@ -9,9 +9,21 @@ import { probeUrl } from '../services/verify';
 import { ensureDocker } from '../services/dockerRuntime';
 import { fetchCapabilities } from '../services/platformCapabilities';
 import { submitAppForReview } from '../services/submissions';
+import { printAppConfigSync } from '../services/appSync';
+import { publisherHandleFromEmail } from '../services/appIdentity';
+import {
+  applyPushLine,
+  createPushState,
+  DockerRunError,
+  formatBytes,
+  parseBuildLine,
+  pushSummary,
+  runStreaming,
+  tail,
+} from '../services/dockerProgress';
 
 /**
- * `flashmandu-app deploy` — record a real production host on the manifest.
+ * `autohisab-business deploy` — record a real production host on the manifest.
  *
  * `push` is marketplace publish only and never touches a host; this is where
  * hosting is decided. It deliberately does NOT ship code over SSH or hold
@@ -25,7 +37,7 @@ export function makeDeployCommand(): Command {
     .option('-t, --target <target>', 'Hosting target: vercel | self | platform')
     .option('--base-url <url>', 'Base URL (required for --target self)')
     .option('--registry <registry>', 'Tenant image registry (platform target; env FLASHMANDU_TENANT_REGISTRY)')
-    .option('--platform-host <host>', 'Flashmandu platform hostname (platform target; defaults to the logged-in profile)')
+    .option('--platform-host <host>', 'AutoHisab Business platform hostname (platform target; defaults to the logged-in profile)')
     .action(async (opts: {
       dir: string;
       target?: HostingTarget;
@@ -35,6 +47,20 @@ export function makeDeployCommand(): Command {
     }, cmd: Command) => {
       const dir = path.resolve(opts.dir);
       const manifest = await readManifest(dir);
+
+      // Declarative `[webhooks]` + `[[schedules]]` ride along with whatever
+      // this deploy submits. A `[webhooks].url` declared in the toml outranks
+      // the URL derived from the hosting target — say so rather than silently
+      // deploying to one host and delivering webhooks to another.
+      printAppConfigSync(manifest);
+      if (manifest.webhooks?.url) {
+        console.log(
+          chalk.dim(
+            `  Note: [webhooks].url is declared, so webhooks go to ${manifest.webhooks.url} ` +
+              'regardless of the hosting target. Remove it to follow the deployed host.',
+          ),
+        );
+      }
 
       // The program already owns a global --base-url; commander gives the
       // flag to the parent, so read the merged view to pick it up.
@@ -48,7 +74,7 @@ export function makeDeployCommand(): Command {
           choices: [
             { value: 'vercel', name: 'Vercel — deploy now with the Vercel CLI' },
             { value: 'self', name: 'My own server — I have already deployed it' },
-            { value: 'platform', name: 'Flashmandu platform — build, push and run on their cluster' },
+            { value: 'platform', name: 'AutoHisab Business platform — build, push and run on its cluster' },
           ],
         });
       }
@@ -58,13 +84,13 @@ export function makeDeployCommand(): Command {
       if (target === 'platform') {
         const { getActive } = await import('../services/credentials');
         try { await getActive(); } catch {
-          throw new Error('Log in first (`flashmandu-app login`).');
+          throw new Error('Log in first (`autohisab-business login`).');
         }
 
         const caps = await fetchCapabilities();
         if (!caps.platform_hosting || !caps.tenant_registry) {
           throw new Error(
-            'This platform cannot host platform apps (production only). Run `flashmandu-app dev` for local development.',
+            'This platform cannot host platform apps (production only). Run `autohisab-business dev` for local development.',
           );
         }
         const registry = caps.tenant_registry;
@@ -80,7 +106,10 @@ export function makeDeployCommand(): Command {
         const handle = publisherHandleFromEmail(manifest.developer_email);
         const repo = `${registry}/${handle}/${manifest.slug}`;
 
-        const spinner = ora(`Building ${repo}…`).start();
+        const isTTY = Boolean(process.stdout.isTTY);
+        const spinner = ora(`Building ${repo}…`);
+        if (isTTY) spinner.start();
+        else console.log(chalk.dim(`Building ${repo}…`));
         try {
           execFileSync('docker', ['login', '-u', registryUser, '--password-stdin', registry], {
             cwd: dir,
@@ -89,12 +118,57 @@ export function makeDeployCommand(): Command {
           });
           // Build for linux/amd64 — the tenant cluster runs on x86_64. Building
           // on Apple Silicon without --platform produces an arm64-only image that
-          // k3s cannot run ("no match for platform in manifest").
-          execFileSync('docker', ['build', '--platform', 'linux/amd64', '-t', repo, '.'], { cwd: dir, stdio: 'pipe' });
-          execFileSync('docker', ['push', repo], { cwd: dir, stdio: 'pipe' });
+          // k3s cannot run ("no match for platform in manifest"). --progress=plain
+          // gives parseable `#<n> <stage>` lines for the live spinner text.
+          const buildStart = Date.now();
+          const elapsed = (): string => `${Math.round((Date.now() - buildStart) / 1000)}s`;
+          await runStreaming(
+            ['build', '--progress=plain', '--platform', 'linux/amd64', '-t', repo, '.'],
+            { cwd: dir },
+            (line) => {
+              if (!isTTY) {
+                process.stdout.write(`${line}\n`);
+                return;
+              }
+              const step = parseBuildLine(line);
+              if (step) spinner.text = `Building ${repo} — ${step} (${elapsed()})`;
+            },
+          );
+
+          const size = Number(
+            execFileSync('docker', ['image', 'inspect', repo, '--format={{.Size}}'], {
+              cwd: dir,
+              encoding: 'utf8',
+            }).trim(),
+          );
+          const builtMsg = `Built ${repo} (${formatBytes(size)}) in ${elapsed()}`;
+          if (isTTY) spinner.succeed(builtMsg);
+          else console.log(builtMsg);
+
+          const pushStart = Date.now();
+          const pushState = createPushState();
+          if (isTTY) spinner.start(`Pushing ${repo}…`);
+          else console.log(chalk.dim(`Pushing ${repo}…`));
+          await runStreaming(['push', repo], { cwd: dir }, (line) => {
+            if (!isTTY) {
+              process.stdout.write(`${line}\n`);
+              return;
+            }
+            if (applyPushLine(pushState, line)) {
+              const s = pushSummary(pushState);
+              const secs = Math.round((Date.now() - pushStart) / 1000);
+              spinner.text =
+                s.total > 0
+                  ? `Pushing ${repo}… ${formatBytes(s.current)}/${formatBytes(s.total)} (${s.percent}%, ${secs}s)`
+                  : `Pushing ${repo}… ${formatBytes(s.current)} (${secs}s)`;
+            }
+          });
         } catch (err) {
-          spinner.fail('Docker build/push failed.');
-          throw new Error(`Could not build or push ${repo}.\n${(err as Error).message}`);
+          if (isTTY) spinner.fail('Docker build/push failed.');
+          else console.error(chalk.red('✗ Docker build/push failed.'));
+          const output =
+            err instanceof DockerRunError ? tail(err.output) : (err as Error).message;
+          throw new Error(`Could not build or push ${repo}.\n${output}`);
         }
 
         const digestRef = execFileSync('docker', ['inspect', '--format={{index .RepoDigests 0}}', repo], {
@@ -176,11 +250,11 @@ export function makeDeployCommand(): Command {
       for (const [field, url] of Object.entries(urls)) {
         console.log(chalk.dim(`    ${field} = ${url}`));
       }
-      console.log(chalk.dim('\n  Next: flashmandu-app push'));
+      console.log(chalk.dim('\n  Next: autohisab-business push'));
     });
 }
 
-/** The platform hostname defaults to the Flashmandu host the CLI is logged into. */
+/** The platform hostname defaults to the AutoHisab Business host the CLI is logged into. */
 async function platformHostFromProfile(): Promise<string> {
   const override = process.env.FLASHMANDU_BASE_URL_OVERRIDE;
   if (override) return override;
@@ -194,24 +268,7 @@ async function platformHostFromProfile(): Promise<string> {
   }
 
   throw new Error(
-    'Could not determine the platform host. Log in (`flashmandu-app login`) or pass --platform-host.',
+    'Could not determine the platform host. Log in (`autohisab-business login`) or pass --platform-host.',
   );
 }
 
-/**
- * Mirror of the platform's publisher-handle derivation (AppManager::publisherHandle
- * with no username): email local-part, lowercased, non-alphanumerics to dashes.
- * The image path must match the `<handle>/<slug>` app id the platform runs.
- */
-function publisherHandleFromEmail(email: string | undefined): string {
-  const raw = (email ?? '').split('@')[0] ?? '';
-  const handle = raw.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
-
-  if (!handle) {
-    throw new Error(
-      'Cannot derive a publisher handle — set developer_email in flashmandu.app.toml first.',
-    );
-  }
-
-  return handle;
-}

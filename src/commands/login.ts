@@ -1,12 +1,12 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { input, password } from '@inquirer/prompts';
+import { input, password, select } from '@inquirer/prompts';
 import { setProfile } from '../services/credentials';
 import { get, post } from '../services/apiClient';
 
 /**
- * `flashmandu-app login` — authenticate against the dev-box and store a
+ * `autohisab-business login` — authenticate against the dev-box and store a
  * developer Bearer token in `~/.flashmandu/credentials.toml` (0600).
  *
  * Flow (device-code style):
@@ -41,14 +41,28 @@ export function makeLoginCommand(): Command {
   );
 
   cmd
-    .option('-b, --base-url <url>', 'Dev-box base URL, e.g. https://dev.flashmandu.example')
+    .option('-b, --base-url <url>', 'Dev-box base URL, e.g. https://dev.autohisab.example')
     .option('-p, --profile <name>', 'Profile name to store this login under', 'default')
     .option('--token <token>', 'Use an existing token instead of prompting for credentials')
     .action(async (opts: { baseUrl?: string; profile: string; token?: string }) => {
-      const baseUrl = (opts.baseUrl ?? (await input({
-        message: 'Dev-box base URL (https://...):',
-        validate: (v) => (/^https?:\/\//i.test(v) ? true : 'Include the http(s) scheme.'),
-      }))).replace(/\/+$/, '');
+      let baseUrl = opts.baseUrl;
+      if (!baseUrl) {
+        const choice = await select({
+          message: 'Dev-box environment:',
+          choices: [
+            { name: 'business.autohisab.com (production)', value: 'https://business.autohisab.com' },
+            { name: 'business-dev.autohisab.com (development)', value: 'https://business-dev.autohisab.com' },
+            { name: 'Custom URL (local development)', value: '__custom__' },
+          ],
+        });
+        baseUrl = choice === '__custom__'
+          ? await input({
+              message: 'Dev-box base URL (https://...):',
+              validate: (v) => (/^https?:\/\//i.test(v) ? true : 'Include the http(s) scheme.'),
+            })
+          : choice;
+      }
+      baseUrl = baseUrl.replace(/\/+$/, '');
 
       let token: string;
       if (opts.token) {

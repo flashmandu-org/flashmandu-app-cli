@@ -2,18 +2,29 @@
 
 declare(strict_types=1);
 
-namespace Acme\FlashmanduApp;
+namespace Acme\AutohisabBusinessApp;
 
 /**
- * Verifies the Flashmandu platform webhook signature.
+ * Verifies the AutoHisab Business platform webhook signature.
  *
  *   signature = hash_hmac('sha256', $timestamp.'.'.$body, $webhook_secret)
  *
  * Sent in:
- *   X-App-Signature, X-App-Timestamp, X-App-Delivery (UUID), X-App-Event.
+ *   X-App-Signature, X-App-Timestamp, X-App-Delivery, X-App-Event.
  *
- * This is a framework-free reference; drop it into your Laravel/Symfony/raw-PHP
- * controller and feed it php://input verbatim.
+ * This copy is deliberately dependency-free so `php -S` works before
+ * `composer install`. **Once you are on composer, delete it and use
+ * `Flashmandu\AppSdk\Webhooks\Verifier` from `flashmandu/app-sdk`** — same
+ * algorithm, typed result object, case-insensitive/PSR-7 header handling.
+ *
+ * Feed it php://input VERBATIM: re-serializing the JSON changes bytes and the
+ * HMAC will not match.
+ *
+ * Deliveries are at-least-once. The retry ladder is 6 attempts — 1m, 5m, 30m,
+ * 2h, 8h — then dead-letter. `X-App-Delivery` is per ATTEMPT: record it and
+ * treat a repeat as a duplicate. Payloads carry a per-resource monotonic
+ * `sequence`; drop anything below what you already applied. Respond within
+ * 10s — accept with 202 and continue asynchronously if the work is slow.
  */
 final class WebhookVerifier
 {

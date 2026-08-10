@@ -15,7 +15,7 @@ import * as TOML from '@iarna/toml';
 export interface ProfileEntry {
   /** Bearer token sent as `Authorization: Bearer <token>` to the dev box. */
   token: string;
-  /** Absolute base URL of the dev-box Flashmandu host (no trailing slash). */
+  /** Absolute base URL of the dev-box AutoHisab Business host (no trailing slash). */
   base_url: string;
 }
 
@@ -30,7 +30,7 @@ const FILE = path.join(DIR, 'credentials.toml');
 
 /** Error thrown when no profile is authenticated. */
 export class NotAuthenticatedError extends Error {
-  constructor(message = 'Not logged in. Run `flashmandu-app login` first.') {
+  constructor(message = 'Not logged in. Run `autohisab-business login` first.') {
     super(message);
     this.name = 'NotAuthenticatedError';
   }

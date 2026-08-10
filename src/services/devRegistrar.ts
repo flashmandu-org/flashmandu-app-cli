@@ -40,6 +40,12 @@ export interface DevRegisterRequest {
   extensions?: unknown[];
   /** App-declared sidebar nav items (Spec #2 §S6). */
   nav_items?: unknown[];
+  /**
+   * Declarative `[[schedules]]` from the manifest. Stored per install; the
+   * platform's Horizon scheduler turns each into a signed `schedule.tick`
+   * webhook. Additive — a host that predates schedules ignores the key.
+   */
+  schedules?: Array<{ name: string; every?: string; interval_seconds?: number; cron?: string }>;
 }
 
 export interface DevRegisterResponse {

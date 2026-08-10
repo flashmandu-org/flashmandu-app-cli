@@ -1,10 +1,44 @@
-# Flashmandu App — Next.js
+# AutoHisab Business App — Next.js
 
-A Next.js (App Router, TypeScript) starter for a Flashmandu storefront app.
-Wires the OAuth + webhook contracts the Flashmandu platform expects.
+A Next.js (App Router, TypeScript) starter for an AutoHisab Business app.
+Wires the OAuth + webhook contracts the platform expects, and renders through
+the host's own chrome so the embed is indistinguishable from a native page.
+
+## Page chrome — read this first
+
+**Do not render a desktop page heading.** Breadcrumbs, page actions and the
+dirty ⇄ Save/Discard swap live in the HOST command bar; the app declares them
+with `usePageChrome` and the host draws them. An in-page title bar is exactly
+what makes an embed look bolted-on.
+
+`lib/chrome.tsx` wraps that in one component:
+
+```tsx
+<AppPage
+  title="Items"
+  crumbs={[{ label: 'Dashboard', path: '/' }, { label: 'Items' }]}
+  actions={[{ id: 'new', label: 'New item', variant: 'primary', onSelect: create }]}
+  dirty={form.isDirty}
+>
+  …
+</AppPage>
+```
+
+Below `lg`, where the host command bar is not visible, `AppPage` renders
+`MobilePageHeader` inside the iframe. It is `lg:hidden` in CSS, so the two
+never both appear and there is no hydration flash.
 
 ## What's included
 
+- `lib/chrome.tsx` — `AppPage`: the one place page chrome is declared.
+- `app/page.tsx` — dashboard. No heading; chrome comes from the host.
+- `app/items/page.tsx` — the standard list surface: `IndexTable` with sortable
+  columns, a pinned first column, selection + bulk actions, pagination in the
+  shell footer, and **skeleton-first loading** (placeholder rows, never a blank
+  pane and never a layout jump).
+- `app/(admin)/settings/page.tsx` — dirty-state example: while the form is
+  dirty the host swaps its bar for native Save / Discard, which still call back
+  into this page by action id.
 - `app/oauth/authorize/route.ts` — OAuth Authorize endpoint. The platform
   redirects the merchant here with standard OAuth + PKCE (S256) params; this
   route returns the merchant to the platform's callback with a `code` + the
@@ -22,15 +56,19 @@ Wires the OAuth + webhook contracts the Flashmandu platform expects.
   defence.
 - `lib/config.ts` / `lib/flashmandu.ts` — env loader + minimal API client for
   `GET /api/apps/me` and `GET /api/apps/hooks`.
+- `lib/revalidate.ts` — `purgePlatformEmbedCaches()`: call after any mutation
+  to data your embed blocks render or list as options, so the platform drops
+  the cached picker markup + dynamic-options payloads immediately instead of
+  waiting out the TTL.
 
 ## Local dev
 
 ```bash
 npm install
-flashmandu-app dev
+autohisab-business dev
 ```
 
-`flashmandu-app dev` opens a public tunnel, registers the sandbox with the
+`autohisab-business dev` opens a public tunnel, registers the sandbox with the
 dev-box, and writes `.flashmandu/sandbox-secrets.<app>.json` (0600, gitignored).
 Wire those into env (e.g. via `dotenv`):
 
@@ -42,7 +80,7 @@ npm run dev
 
 ## Platform deploys (migrations + seeding)
 
-The bundled `Dockerfile` is what `flashmandu-app deploy --target platform`
+The bundled `Dockerfile` is what `autohisab-business deploy --target platform`
 builds and pushes. On every pod boot, `docker-entrypoint.sh` runs **before**
 the server accepts traffic:
 

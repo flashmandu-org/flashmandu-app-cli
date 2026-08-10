@@ -1,5 +1,5 @@
 {
-  "name": "acme/flashmandu-app",
+  "name": "acme/autohisab-business-app",
   "description": "Flashmandu app skeleton (PHP, requires flashmandu/app-sdk).",
   "type": "library",
   "license": "proprietary",
@@ -12,7 +12,7 @@
   },
   "autoload": {
     "psr-4": {
-      "Acme\\FlashmanduApp\\": "src/"
+      "Acme\\AutohisabBusinessApp\\": "src/"
     }
   },
   "autoload-dev": {

@@ -5,13 +5,20 @@ import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { createServer } from 'node:net';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { readManifest } from '../services/manifest';
+import { readManifest, MANIFEST_FILENAME } from '../services/manifest';
+import { scaffoldApp } from './init';
+import { confirm } from '@inquirer/prompts';
 import { startTunnel, type Tunnel, type TunnelProvider } from '../services/tunnel';
 import { registerSandbox, type DevRegisterResponse } from '../services/devRegistrar';
 import { getActive } from '../services/credentials';
+import {
+  buildAppConfigSync,
+  printAppConfigSync,
+  warnOnBridgeVersionFloor,
+} from '../services/appSync';
 
 /**
- * `flashmandu-app dev` — the local dev loop. Reserved verb: NO marketplace
+ * `autohisab-business dev` — the local dev loop. Reserved verb: NO marketplace
  * publish, NO production host contact. Only the dev-box.
  *
  * Sequence:
@@ -212,7 +219,23 @@ export function makeDevCommand(): Command {
         sandboxPath: string;
       }) => {
         const appDir = path.resolve(opts.dir);
+
+        // Missing manifest: offer to scaffold interactively. Non-TTY
+        // (CI/scripts) never prompts — it falls through to readManifest's
+        // usual error so automation never blocks.
+        if (!(await pathExists(path.join(appDir, MANIFEST_FILENAME))) && process.stdin.isTTY) {
+          const scaffold = await confirm({
+            message: `No ${MANIFEST_FILENAME} found in ${appDir}. Scaffold a new app here now?`,
+            default: true,
+          });
+          if (scaffold) {
+            const result = await scaffoldApp(appDir, {});
+            if (result === 'aborted') return; // "Aborted." already printed.
+          }
+        }
         const manifest = await readManifest(appDir);
+        // Advisory only — a stale bridge never blocks the dev loop.
+        await warnOnBridgeVersionFloor(appDir);
         const port = Number.parseInt(opts.port, 10);
         if (!Number.isFinite(port) || port <= 0) {
           throw new Error(`--port must be a positive integer (got "${opts.port}")`);
@@ -336,7 +359,7 @@ export function makeDevCommand(): Command {
         // Re-register if the tunnel URL ever changes (provider reconnect).
         let currentHost = tunnel.url;
         tunnel.onClose(() => {
-          console.log(chalk.yellow('Tunnel closed unexpectedly. Restart `flashmandu-app dev`.'));
+          console.log(chalk.yellow('Tunnel closed unexpectedly. Restart `autohisab-business dev`.'));
         });
 
         // 4. Register sandbox with the dev-box. Send the developer-chosen
@@ -389,20 +412,26 @@ export function makeDevCommand(): Command {
             order: n.order,
           }));
 
+          // Declarative `[webhooks]` + `[[schedules]]` are synced on every
+          // register: the toml is the single source of truth and the CLI is
+          // its only writer.
+          const sync = buildAppConfigSync(manifest);
+
           return registerSandbox({
             slug: manifest.slug,
             name: manifest.name,
             version: manifest.version,
-            webhook_url: substituteHost(manifest.webhook_url, host),
+            webhook_url: substituteHost(sync.webhook_url, host),
             authorize_url: substituteHost(manifest.authorize_url, host),
             token_url: substituteHost(manifest.token_url, host),
             credential_delivery_url: manifest.credential_delivery_url
               ? substituteHost(manifest.credential_delivery_url, host)
               : undefined,
             scopes: manifest.scopes,
-            subscribed_events: manifest.subscribed_events,
+            subscribed_events: sync.subscribed_events,
             extensions,
             nav_items: navItems,
+            schedules: sync.schedules,
           });
         };
 
@@ -413,6 +442,7 @@ export function makeDevCommand(): Command {
             canonicalAppId = reg.app_id;
             spinner.succeed(chalk.green('Sandbox registered.'));
             await printSecretsBanner(reg, currentHost);
+            printAppConfigSync(manifest);
 
             const profile = await getActive();
             const file = path.join(

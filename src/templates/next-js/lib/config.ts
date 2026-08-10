@@ -5,7 +5,7 @@ import path from 'node:path';
  * Runtime config for the Flashmandu app template.
  *
  * Resolution order: process.env first, then the newest
- * `.flashmandu/sandbox-secrets.<app>.json` written by `flashmandu-app dev`.
+ * `.flashmandu/sandbox-secrets.<app>.json` written by `autohisab-business dev`.
  * Reading the file here means the app works identically whether the server
  * was started by the CLI or directly (`npm run dev`) — no dotenv wiring
  * required. In deployed installs, set the env vars yourself from whatever
@@ -53,7 +53,7 @@ function required(name: string): string {
   const v = process.env[name] || fromSandboxSecrets(name);
   if (!v) {
     throw new Error(
-      `Missing ${name}. Run \`flashmandu-app dev\` — it registers your app on the ` +
+      `Missing ${name}. Run \`autohisab-business dev\` — it registers your app on the ` +
         `dev-box and writes .flashmandu/sandbox-secrets.<app>.json, which this loader reads.`,
     );
   }

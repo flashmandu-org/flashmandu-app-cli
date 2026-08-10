@@ -9,7 +9,7 @@ declare(strict_types=1);
  *   php -S localhost:3000 -t public
  *
  * Or let the CLI run the whole loop (tunnel + dev-box registration + secrets):
- *   flashmandu-app dev --app-command "php -S localhost:3000 -t public"
+ *   autohisab-business dev --app-command "php -S localhost:3000 -t public"
  *
  * Implements the full remote-app contract:
  *   GET  /                       identity page (calls the dev-box /api/apps/me)
@@ -19,12 +19,12 @@ declare(strict_types=1);
  *   POST /webhooks/flashmandu    HMAC-verified event webhook receiver
  *
  * Config resolution: FLASHMANDU_* env vars first, then the newest
- * .flashmandu/sandbox-secrets.<app>.json written by `flashmandu-app dev`.
+ * .flashmandu/sandbox-secrets.<app>.json written by `autohisab-business dev`.
  */
 
 require dirname(__DIR__).'/src/WebhookVerifier.php';
 
-use Acme\FlashmanduApp\WebhookVerifier;
+use Acme\AutohisabBusinessApp\WebhookVerifier;
 
 /** @return array{api_token: ?string, webhook_secret: ?string, dev_box: string, app_id: ?string} */
 function flashmandu_config(): array
@@ -119,7 +119,7 @@ function homepage(array $config): void
         }
     } else {
         $meError = '<strong>Not registered yet.</strong> Run '
-            .'<code>flashmandu-app dev --app-command "php -S localhost:3000 -t public"</code> '
+            .'<code>autohisab-business dev --app-command "php -S localhost:3000 -t public"</code> '
             .'— it writes <code>.flashmandu/sandbox-secrets.&lt;app&gt;.json</code>, which this server reads automatically.';
     }
 
@@ -358,7 +358,7 @@ switch (true) {
 
     case $path === '/webhooks/flashmandu' && $method === 'POST':
         if ($config['webhook_secret'] === null) {
-            json_response(['error' => 'no webhook_secret — run flashmandu-app dev first'], 503);
+            json_response(['error' => 'no webhook_secret — run autohisab-business dev first'], 503);
             break;
         }
         $body = (string) file_get_contents('php://input');

@@ -1,8 +1,8 @@
 {
-  "name": "flashmandu-app-next-template",
+  "name": "autohisab-business-app-next-template",
   "version": "0.1.0",
   "private": true,
-  "description": "Flashmandu app starter (Next.js + TypeScript) with OAuth + HMAC webhooks.",
+  "description": "AutoHisab Business app starter (Next.js + TypeScript) with OAuth + HMAC webhooks, host page chrome and IndexTable.",
   "type": "module",
   "scripts": {
     "dev": "next dev -p ${PORT:-3000}",
@@ -10,12 +10,13 @@
     "start": "next start -p ${PORT:-3000}"
   },
   "dependencies": {
-    "@flashmandu/app-bridge": "^0.2.0",
-    "@flashmandu/app-bridge-ui": "^0.2.0",
+    "@flashmandu/app-bridge": "^0.3.0",
+    "@flashmandu/app-bridge-ui": "^0.3.0",
     "next": "^14.2.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
   },
+  "//bridge": "The bridge packages are a matched PAIR pinned to the same minor: app-bridge speaks protocol v2 (SET_PAGE, TOKEN_REFRESH) and app-bridge-ui renders the chrome that protocol implies. Bump them together — `autohisab-business dev` warns when either falls below the platform's supported floor.",
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/react": "^18.3.0",

@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { getActiveName, listProfiles, removeProfile } from '../services/credentials';
 
-/** `flashmandu-app logout [profile]` — remove a profile from the credential store. */
+/** `autohisab-business logout [profile]` — remove a profile from the credential store. */
 export function makeLogoutCommand(): Command {
   const cmd = new Command('logout')
     .description('Remove a stored profile (default: the active one).')

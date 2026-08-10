@@ -2,11 +2,11 @@ import { getActive, type ProfileEntry } from './credentials';
 
 /**
  * Thin fetch wrapper that injects the developer Bearer token and pins the
- * dev-box base URL. Every network call the CLI makes to the Flashmandu host
+ * dev-box base URL. Every network call the CLI makes to the AutoHisab Business host
  * goes through here.
  *
  * The CLI NEVER embeds a production host. The base URL is whatever the
- * developer configured via `flashmandu-app config set base_url <url>` (or
+ * developer configured via `autohisab-business config set base_url <url>` (or
  * `--base-url`). The dev-box is the only legal target.
  */
 
@@ -101,14 +101,14 @@ export async function request<T = unknown>(
   const base = options.baseUrl ?? process.env.FLASHMANDU_BASE_URL_OVERRIDE ?? profile?.base_url;
   if (!base) {
     throw new Error(
-      'No platform base URL configured. Run `flashmandu-app config set base_url <https://your-dev-box>` — ' +
-        'this is the Flashmandu host the CLI talks to, not your app’s URL.',
+      'No platform base URL configured. Run `autohisab-business config set base_url <https://your-dev-box>` — ' +
+        'this is the AutoHisab Business host the CLI talks to, not your app’s URL.',
     );
   }
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    'User-Agent': '@flashmandu/app-cli',
+    'User-Agent': '@flashmandu/autohisab-business-cli',
     ...(options.headers as Record<string, string> | undefined),
   };
 
@@ -161,4 +161,161 @@ export function post<T = unknown>(
   options: RequestOptions = {},
 ): Promise<T> {
   return request<T>(path, { ...options, method: 'POST', body });
+}
+
+/** PUT helper. */
+export function put<T = unknown>(
+  path: string,
+  body?: unknown,
+  options: RequestOptions = {},
+): Promise<T> {
+  return request<T>(path, { ...options, method: 'PUT', body });
+}
+
+/** DELETE helper. */
+export function del<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
+  return request<T>(path, { ...options, method: 'DELETE' });
+}
+
+/* ------------------------------------------------------------------------ *
+ * Phase 1 platform endpoints
+ *
+ * Every endpoint added by the Phase 1 app-platform work lives in THIS block,
+ * paths included, so a contract change on the host is a one-file fix here.
+ * Commands must never construct a URL themselves.
+ * ------------------------------------------------------------------------ */
+
+/** Canonical paths. Kept together so a host rename is one edit. */
+export const ENDPOINTS = {
+  /** Delivery log (parity spec §9). Superset of the older dev-only endpoint. */
+  deliveries: '/api/apps/deliveries',
+  /** Legacy dev-box delivery list, used as a fallback on 404/405. */
+  devDeliveries: '/api/apps/dev/deliveries',
+  /** Replay a single delivery by id. */
+  replay: (id: string): string => `/api/apps/deliveries/${encodeURIComponent(id)}/replay`,
+  /** Hosted-app secrets. Write-only: the platform exposes key names, never values. */
+  secrets: '/api/apps/hosted-secrets',
+  /** Runtime capabilities, including the supported bridge version floor. */
+  capabilities: '/api/apps/capabilities',
+} as const;
+
+/**
+ * One recorded webhook delivery attempt.
+ *
+ * `attempt`/`attempts`, `duration_ms` and `dead_lettered` come from the Phase 1
+ * delivery log; the older dev endpoint returns only the first four fields, so
+ * every added field is optional and the renderer degrades to "-".
+ */
+export interface DeliveryRecord {
+  /** Row id — what `hooks replay <id>` takes. */
+  id?: string | number;
+  /** Platform-issued dedupe id, echoed to the app as `X-App-Delivery`. */
+  delivery_id: string | null;
+  event: string;
+  url?: string;
+  http_status: number | null;
+  succeeded: boolean;
+  /** 1-based attempt number of this row. */
+  attempt?: number;
+  /** Total attempts made for this delivery so far. */
+  attempts?: number;
+  /** Round-trip latency in milliseconds. */
+  duration_ms?: number;
+  /** True once the backoff schedule is exhausted (1m, 5m, 30m, 2h, 8h). */
+  dead_lettered?: boolean;
+  /** ISO-8601. */
+  created_at?: string;
+  next_attempt_at?: string | null;
+  response?: string | null;
+}
+
+export interface DeliveriesQuery {
+  /** App token to authenticate as the app itself rather than the dev/cli app. */
+  token?: string;
+  limit?: number;
+  event?: string;
+  /** 'succeeded' | 'failed' | 'dead' — server-side filter. */
+  status?: string;
+}
+
+/**
+ * List recent webhook deliveries. Falls back to the pre-Phase-1 dev endpoint
+ * when the host has not shipped the richer log yet, so the CLI keeps working
+ * against an older dev box.
+ */
+export async function fetchDeliveries(query: DeliveriesQuery = {}): Promise<DeliveryRecord[]> {
+  const params = new URLSearchParams();
+  if (query.limit !== undefined) params.set('limit', String(query.limit));
+  if (query.event) params.set('event', query.event);
+  if (query.status) params.set('status', query.status);
+  const qs = params.toString();
+  const options: RequestOptions = query.token ? { token: query.token } : {};
+
+  try {
+    const res = await get<{ deliveries?: DeliveryRecord[] }>(
+      qs ? `${ENDPOINTS.deliveries}?${qs}` : ENDPOINTS.deliveries,
+      options,
+    );
+    return res.deliveries ?? [];
+  } catch (err) {
+    if (err instanceof ApiError && (err.status === 404 || err.status === 405)) {
+      const res = await get<{ deliveries?: DeliveryRecord[] }>(ENDPOINTS.devDeliveries, options);
+      return res.deliveries ?? [];
+    }
+    throw err;
+  }
+}
+
+export interface ReplayResult {
+  /** True when the platform accepted the replay request. */
+  ok?: boolean;
+  delivery_id?: string;
+  http_status?: number | null;
+  message?: string;
+}
+
+/** Redeliver one logged webhook. */
+export function replayDelivery(id: string, token?: string): Promise<ReplayResult> {
+  return post<ReplayResult>(ENDPOINTS.replay(id), undefined, token ? { token } : {});
+}
+
+/**
+ * Hosted-app secrets (capability spec §8.1). WRITE-ONLY by design: the
+ * platform has no read-back endpoint, so `keys` is all the CLI can ever show.
+ */
+export function listSecretKeys(appId: string): Promise<{ keys: string[] }> {
+  return get<{ keys: string[] }>(`${ENDPOINTS.secrets}?app_id=${encodeURIComponent(appId)}`);
+}
+
+/** Set (or replace) one secret. The value is encrypted at rest on the host. */
+export function setSecret(appId: string, key: string, value: string): Promise<unknown> {
+  return put(ENDPOINTS.secrets, { app_id: appId, key, value });
+}
+
+/** Delete one secret. */
+export function unsetSecret(appId: string, key: string): Promise<unknown> {
+  return del(
+    `${ENDPOINTS.secrets}?app_id=${encodeURIComponent(appId)}&key=${encodeURIComponent(key)}`,
+  );
+}
+
+/**
+ * Minimum `@flashmandu/app-bridge` / `app-bridge-ui` versions this platform
+ * supports. Absent on hosts that predate the check — callers treat a missing
+ * floor as "no opinion" and stay silent rather than warning wrongly.
+ */
+export interface BridgeVersionFloor {
+  'app-bridge'?: string;
+  'app-bridge-ui'?: string;
+}
+
+/** Fetch the platform's supported bridge version floor. Never throws. */
+export async function fetchBridgeVersionFloor(): Promise<BridgeVersionFloor> {
+  try {
+    const caps = await get<{ bridge_version_floor?: BridgeVersionFloor }>(ENDPOINTS.capabilities);
+    return caps.bridge_version_floor ?? {};
+  } catch {
+    // A version hint must never break `dev` or `push`.
+    return {};
+  }
 }

@@ -28,9 +28,41 @@ describe('submitAppForReview', () => {
     expect(res.id).toBe(7);
     expect(apiClient.post).toHaveBeenCalledWith(
       '/api/apps/app-submissions',
+      // Authenticated: the server resolves the publisher from the bearer, so
+      // there is no third options argument.
       expect.objectContaining({ app_id: 'widget', version: '1.0.1' }),
-      { noAuth: true },
     );
+  });
+
+  it('syncs [webhooks] events + url and [[schedules]] with the submission', async () => {
+    (apiClient.post as any).mockResolvedValue({ id: 11 });
+    await submitAppForReview(
+      {
+        ...manifest,
+        subscribed_events: ['legacy.event'],
+        webhooks: { url: 'https://hooks.acme.com/in', events: ['order.created'] },
+        schedules: [{ name: 'rollup', every: '15m' }],
+      },
+      { version: '1.0.2' },
+    );
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/api/apps/app-submissions',
+      expect.objectContaining({
+        webhook_url: 'https://hooks.acme.com/in',
+        subscribed_events: ['order.created'],
+        schedules: [{ name: 'rollup', every: '15m', interval_seconds: 900 }],
+      }),
+    );
+  });
+
+  it('validates the placeholder guard against the [webhooks] url, not just webhook_url', async () => {
+    await expect(
+      submitAppForReview(
+        { ...manifest, webhooks: { url: 'https://APP-HOST/in', events: [] } },
+        { version: '1.0.3' },
+      ),
+    ).rejects.toThrow(/placeholder/);
   });
 
   it('accepts real URLs spread over a placeholder manifest (deploy --target platform shape)', async () => {
@@ -55,7 +87,6 @@ describe('submitAppForReview', () => {
     expect(apiClient.post).toHaveBeenCalledWith(
       '/api/apps/app-submissions',
       expect.objectContaining({ authorize_url: derivedUrls.authorize_url, version: '0.2.0' }),
-      { noAuth: true },
     );
   });
 });

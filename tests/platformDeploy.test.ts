@@ -69,8 +69,8 @@ describe('resolveTenantRegistry', () => {
 });
 
 describe('platformHostingRefusal', () => {
-  it('names `flashmandu-app dev` as the local alternative', () => {
-    expect(platformHostingRefusal(LOCAL_CAPS)).toMatch(/flashmandu-app dev/);
+  it('names `autohisab-business dev` as the local alternative', () => {
+    expect(platformHostingRefusal(LOCAL_CAPS)).toMatch(/autohisab-business dev/);
   });
 
   it('names the environment so the developer knows where they are', () => {
@@ -91,10 +91,10 @@ describe('assertPlatformDeployReady', () => {
     ).rejects.toThrow(/login/i);
   });
 
-  it('refuses when the platform does not support platform hosting, naming `flashmandu-app dev`', async () => {
+  it('refuses when the platform does not support platform hosting, naming `autohisab-business dev`', async () => {
     await expect(
       assertPlatformDeployReady(LOCAL_CAPS, null, passingDeps()),
-    ).rejects.toThrow(/flashmandu-app dev/);
+    ).rejects.toThrow(/autohisab-business dev/);
   });
 
   it('fails when the platform supports hosting but advertises no registry', async () => {

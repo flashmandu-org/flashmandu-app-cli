@@ -1,0 +1,32 @@
+slug = "autohisab-business-app"
+name = "Acme AutoHisab Business App"
+version = "0.1.0"
+description = "An AutoHisab Business app skeleton (PHP, requires flashmandu/app-sdk)."
+
+# Replace APP-HOST with your tunnel URL when running `autohisab-business dev`.
+authorize_url = "https://APP-HOST/oauth/authorize"
+token_url = "https://APP-HOST/oauth/token"
+webhook_url = "https://APP-HOST/webhooks/flashmandu"
+
+scopes = ["ReadOrders"]
+
+developer_name = "Your Name"
+developer_email = "you@example.com"
+source_url = "https://github.com/your-org/autohisab-business-app"
+provider_class = "Acme\\AutohisabBusinessApp\\Manifest"
+
+# Declarative webhook subscription. The CLI is the single writer:
+# `autohisab-business hooks subscribe <event>` edits this list, and
+# `dev`/`push`/`deploy` sync it to the platform. `url` is optional — omit it to
+# deliver to the top-level `webhook_url` that `deploy` rewrites.
+[webhooks]
+events = ["order.status.changed"]
+
+# Platform-side cron. Each tick arrives as an ordinary signed webhook with
+# event `schedule.tick` and payload { schedule, profile_id, scheduled_at }.
+# Rules: minimum interval 5m, at most 5 schedules per app, names unique.
+# Use `every = "15m"` OR `cron = "0 18 * * *"` (profile timezone), never both.
+#
+# [[schedules]]
+# name  = "nightly-reconcile"
+# cron  = "0 2 * * *"

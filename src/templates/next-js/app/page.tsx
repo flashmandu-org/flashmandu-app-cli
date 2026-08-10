@@ -1,12 +1,33 @@
+'use client';
+
 import Link from 'next/link';
 import { Card, Section, Stat, StatGrid } from '@flashmandu/app-bridge-ui/react';
-import { PageShell } from '@/lib/nav';
+import { AppPage } from '@/lib/chrome';
 
+/**
+ * Dashboard.
+ *
+ * Note what is NOT here: no page heading, no in-app title bar. The breadcrumb
+ * and the "New item" button below are published to the HOST command bar by
+ * `AppPage` → `usePageChrome`, which is what makes the embed read as a native
+ * page instead of a website inside a box.
+ */
 export default function Page() {
   return (
-    <PageShell
+    <AppPage
       title="Dashboard"
-      subtitle="Welcome to your Flashmandu app."
+      subtitle="Welcome to your AutoHisab Business app."
+      crumbs={[{ label: 'Dashboard' }]}
+      actions={[
+        {
+          id: 'new-item',
+          label: 'New item',
+          variant: 'primary',
+          onSelect: () => {
+            window.location.href = '/items';
+          },
+        },
+      ]}
     >
       <StatGrid>
         <Stat label="Status" value="Active" />
@@ -23,30 +44,34 @@ export default function Page() {
           </Link>
         }
       >
-        <Card title="Quick start" subtitle="Build your first feature">
+        <Card title="Page chrome" subtitle="Declared, not drawn">
           <p className="fm-muted" style={{ margin: 0 }}>
-            This is your app's dashboard. Use the components from
-            <code> @flashmandu/app-bridge-ui/react</code> to build your UI —
-            buttons, cards, tables, forms, and more.
+            Call <code>usePageChrome</code> (via <code>AppPage</code>) with your
+            breadcrumbs, actions and dirty flag. The host renders them in its own
+            command bar and posts clicks back by action id. Never render a
+            desktop <code>&lt;h1&gt;</code> yourself.
           </p>
         </Card>
 
-        <Card title="App Bridge" subtitle="Embedded context" accent="blue">
+        <Card title="Tables" subtitle="IndexTable" accent="blue">
           <p className="fm-muted" style={{ margin: 0 }}>
-            When embedded in the Flashmandu platform, the App Bridge resolves
-            your session context (profile ID, scopes, locale). Visit the
-            Settings page to see the live bridge context.
+            The <Link href="/items">Items</Link> page shows the standard list
+            surface: sortable columns, selection with bulk actions, a pinned
+            first column, pagination in the shell footer, and skeleton rows
+            while data loads.
           </p>
         </Card>
 
         <Card title="Webhooks" subtitle="HMAC-verified events" accent="green">
           <p className="fm-muted" style={{ margin: 0 }}>
-            Webhook deliveries are verified via HMAC. The webhook handler is at
-            <code> /webhooks/flashmandu</code>. Subscribe to events in your
-            <code> flashmandu.app.toml</code>.
+            Declare subscriptions in the <code>[webhooks]</code> section of
+            <code> flashmandu.app.toml</code> (or run
+            <code> autohisab-business hooks subscribe &lt;event&gt;</code>); the
+            handler lives at <code>/webhooks/flashmandu</code>. Inspect
+            deliveries with <code>autohisab-business hooks deliveries</code>.
           </p>
         </Card>
       </Section>
-    </PageShell>
+    </AppPage>
   );
 }

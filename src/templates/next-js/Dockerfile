@@ -1,6 +1,6 @@
 # Flashmandu platform-hosted app image.
 #
-# Built and pushed by `flashmandu-app deploy --target platform`, then run on the
+# Built and pushed by `autohisab-business deploy --target platform`, then run on the
 # tenant k3s cluster under gVisor. The platform injects configuration as
 # environment variables (DATABASE_URL, FLASHMANDU_*) from a Kubernetes Secret,
 # so nothing environment-specific is baked in here.

@@ -1,5 +1,6 @@
 import { post } from './apiClient';
 import { isPlaceholderUrl } from './verify';
+import { buildAppConfigSync } from './appSync';
 import type { AppManifest } from './manifest';
 
 export interface SubmitResult {
@@ -20,11 +21,19 @@ export async function submitAppForReview(
   manifest: AppManifest,
   opts: SubmitOptions,
 ): Promise<SubmitResult> {
-  const badUrls = (['authorize_url', 'token_url', 'webhook_url'] as const)
-    .filter((f) => isPlaceholderUrl(manifest[f] ?? ''));
+  // `[webhooks]` / `[[schedules]]` are synced with the submission — the same
+  // declarative surface `dev` registers, so review and runtime never disagree.
+  const sync = buildAppConfigSync(manifest);
+
+  const candidates: Array<[string, string]> = [
+    ['authorize_url', manifest.authorize_url ?? ''],
+    ['token_url', manifest.token_url ?? ''],
+    ['webhook_url', sync.webhook_url ?? ''],
+  ];
+  const badUrls = candidates.filter(([, url]) => isPlaceholderUrl(url)).map(([field]) => field);
   if (badUrls.length > 0) {
     throw new Error(
-      `Cannot submit: ${badUrls.join(', ')} still hold placeholder host(s). Run \`flashmandu-app deploy\` first.`,
+      `Cannot submit: ${badUrls.join(', ')} still hold placeholder host(s). Run \`autohisab-business deploy\` first.`,
     );
   }
 
@@ -52,10 +61,11 @@ export async function submitAppForReview(
       description: opts.description ?? manifest.description ?? '',
       authorize_url: manifest.authorize_url,
       token_url: manifest.token_url,
-      webhook_url: manifest.webhook_url,
+      webhook_url: sync.webhook_url,
       version: opts.version,
       scopes: manifest.scopes ?? [],
-      subscribed_events: manifest.subscribed_events ?? [],
+      subscribed_events: sync.subscribed_events,
+      schedules: sync.schedules,
       embed_blocks: manifest.embed_blocks ?? [],
       nav_items: manifest.nav_items ?? [],
       // Platform-hosted apps: carry the hosting decision + image digest so the

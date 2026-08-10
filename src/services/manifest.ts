@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import * as TOML from '@iarna/toml';
 import { z } from 'zod';
+import { validateSchedules, type ScheduleEntry } from './schedules';
 
 /**
  * Zod schema and reader for `flashmandu.app.toml` — the manifest a developer
@@ -78,7 +79,33 @@ export type AppManifest = {
   /** App-declared sidebar nav items (Spec #2 §S6). Sent to the host at
    * dev-register so it renders them in the storefront sidebar. */
   nav_items?: NavItem[];
+  /**
+   * Declarative `[webhooks]` section. The CLI is the single writer of an app's
+   * webhook subscription: `events` is synced into `subscribed_events` and
+   * `url` overrides `webhook_url` on every `dev`/`push`/`deploy`.
+   */
+  webhooks?: WebhooksSection;
+  /** Declarative `[[schedules]]` blocks synced alongside webhooks. */
+  schedules?: ScheduleEntry[];
 };
+
+/**
+ * The `[webhooks]` table in `flashmandu.app.toml`:
+ *
+ * ```toml
+ * [webhooks]
+ * url    = "https://app.example.com/webhooks/flashmandu"
+ * events = ["order.created", "customer.updated"]
+ * ```
+ *
+ * `url` is optional — when omitted the top-level `webhook_url` is used, which
+ * is what `deploy` rewrites. Declaring it here wins, so an app that terminates
+ * webhooks on a different host than its OAuth endpoints can say so.
+ */
+export interface WebhooksSection {
+  url?: string;
+  events: string[];
+}
 
 /**
  * A storefront App Embed Block declared under `[[embed_blocks]]` in the
@@ -165,6 +192,17 @@ const NavItemSchema = z.object({
   order: z.number().int().min(0).optional(),
 });
 
+const WebhooksSchema = z.object({
+  url: z.string().url().optional(),
+  events: z.array(z.string().min(1)).default([]),
+});
+
+const ScheduleSchema = z.object({
+  name: z.string().min(1).max(64),
+  every: z.string().min(1).max(16).optional(),
+  cron: z.string().min(1).max(120).optional(),
+});
+
 const ManifestInput = z.object({
   slug: SlugSchema.optional(),
   id: z
@@ -191,6 +229,11 @@ const ManifestInput = z.object({
     .optional(),
   embed_blocks: z.array(EmbedBlockSchema).optional(),
   nav_items: z.array(NavItemSchema).optional(),
+  webhooks: WebhooksSchema.optional(),
+  // Deliberately uncapped here: the MAX_SCHEDULES rule is enforced in the
+  // superRefine below so the developer gets the platform's own wording rather
+  // than a generic "array too long".
+  schedules: z.array(ScheduleSchema).optional(),
 });
 
 export const ManifestSchema = ManifestInput.superRefine((m, ctx): void => {
@@ -201,6 +244,10 @@ export const ManifestSchema = ManifestInput.superRefine((m, ctx): void => {
         'manifest must declare `slug` (or legacy `id`) — the developer-chosen leaf of <publisher>/<slug>',
       path: ['slug'],
     });
+  }
+
+  for (const message of validateSchedules(m.schedules ?? [])) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: ['schedules'] });
   }
 }).transform((m): AppManifest => {
   const slug = m.slug ?? deriveSlugFromId(m.id)!;
@@ -230,6 +277,52 @@ export function deriveSlugFromId(id: string | undefined): string | undefined {
 
 export const MANIFEST_FILENAME = 'flashmandu.app.toml';
 
+/**
+ * The effective webhook subscription for a manifest.
+ *
+ * The `[webhooks]` section is authoritative when present — it is the
+ * declarative surface the CLI writes and syncs, and `subscribed_events` is
+ * kept only as the legacy/back-compat spelling. `conflict` is true when both
+ * are declared with different sets so callers can warn once instead of
+ * silently discarding the developer's other list.
+ */
+export interface ResolvedWebhooks {
+  url: string;
+  events: string[];
+  /** True when legacy `subscribed_events` disagrees with `[webhooks].events`. */
+  conflict: boolean;
+  /** Which surface won: the declarative section or the legacy top-level key. */
+  source: 'webhooks' | 'subscribed_events';
+}
+
+function sameSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((v) => set.has(v));
+}
+
+/**
+ * Resolve the webhook URL + event list the CLI should sync to the platform.
+ * Events are de-duplicated and sorted so the payload is stable across runs
+ * (a stable payload keeps the host's "did anything change?" checks honest).
+ */
+export function resolveWebhooks(manifest: AppManifest): ResolvedWebhooks {
+  const legacy = [...new Set(manifest.subscribed_events ?? [])].sort();
+  const declared = manifest.webhooks?.events;
+
+  if (!declared) {
+    return { url: manifest.webhook_url, events: legacy, conflict: false, source: 'subscribed_events' };
+  }
+
+  const events = [...new Set(declared)].sort();
+  return {
+    url: manifest.webhooks?.url ?? manifest.webhook_url,
+    events,
+    conflict: legacy.length > 0 && !sameSet(legacy, events),
+    source: 'webhooks',
+  };
+}
+
 /** Read and validate the manifest from `dir`. Throws on malformed TOML/schema. */
 export async function readManifest(dir: string): Promise<AppManifest> {
   const file = path.join(dir, MANIFEST_FILENAME);
@@ -239,7 +332,9 @@ export async function readManifest(dir: string): Promise<AppManifest> {
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new Error(
-        `No ${MANIFEST_FILENAME} found in ${dir}. Run \`flashmandu-app init\` first.`,
+        `No ${MANIFEST_FILENAME} found in ${dir}.\n` +
+          'Run this command from your app directory (the one containing ' +
+          `${MANIFEST_FILENAME}), or scaffold a new app with \`autohisab-business init my-app\`.`,
       );
     }
     throw err;
@@ -253,7 +348,24 @@ export async function readManifest(dir: string): Promise<AppManifest> {
     throw new Error(`Failed to parse ${MANIFEST_FILENAME}: ${msg}`);
   }
 
-  return ManifestSchema.parse(parsed);
+  const result = ManifestSchema.safeParse(parsed);
+  if (result.success) {
+    return result.data;
+  }
+  throw new Error(formatManifestIssues(result.error));
+}
+
+/**
+ * Render a ZodError as the developer-facing manifest report. Zod's default
+ * `message` is a JSON dump; a manifest with three bad `[[schedules]]` blocks
+ * has to read like three sentences, not like a stack trace.
+ */
+export function formatManifestIssues(error: z.ZodError): string {
+  const lines = error.issues.map((issue) => {
+    const where = issue.path.length > 0 ? issue.path.join('.') : MANIFEST_FILENAME;
+    return `  • ${where}: ${issue.message}`;
+  });
+  return `${MANIFEST_FILENAME} is invalid:\n${lines.join('\n')}`;
 }
 
 /** Serialize a manifest to TOML (used by `app init`). */
@@ -273,6 +385,70 @@ export function bumpPatch(version: string): string {
   }
 
   return `${version.trim()}.1`;
+}
+
+/** Render a TOML string array on one line: `["a", "b"]`. */
+function tomlArray(values: string[]): string {
+  return `[${values.map((v) => JSON.stringify(v)).join(', ')}]`;
+}
+
+/**
+ * Rewrite the `[webhooks].events` list IN PLACE, preserving every other line
+ * (comments included). Creates the `[webhooks]` table when it does not exist.
+ *
+ * This is what makes `hooks subscribe` an editor of the manifest rather than a
+ * direct API call: the toml is the single source of truth and the next
+ * `dev`/`push`/`deploy` syncs it.
+ */
+export async function writeWebhookEvents(dir: string, events: string[]): Promise<void> {
+  const file = path.join(dir, MANIFEST_FILENAME);
+  const raw = await fs.readFile(file, 'utf8');
+  const lines = raw.split('\n');
+  const rendered = `events = ${tomlArray(events)}`;
+
+  const headerIdx = lines.findIndex((l) => /^\s*\[webhooks\]\s*(#.*)?$/.test(l));
+  if (headerIdx === -1) {
+    const trailing = lines.length > 0 && lines[lines.length - 1] === '' ? '' : '\n';
+    await fs.writeFile(
+      file,
+      `${raw}${trailing}\n# Declarative webhook subscription. The CLI is the single writer:\n` +
+        `# \`autohisab-business hooks subscribe <event>\` edits this list, and\n` +
+        `# \`dev\`/\`push\`/\`deploy\` sync it to the platform.\n[webhooks]\n${rendered}\n`,
+      'utf8',
+    );
+    return;
+  }
+
+  // Section body ends at the next table header (or EOF).
+  let end = lines.length;
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    if (/^\s*\[/.test(lines[i] ?? '')) {
+      end = i;
+      break;
+    }
+  }
+
+  const eventsIdx = lines.findIndex(
+    (l, i) => i > headerIdx && i < end && /^\s*events\s*=/.test(l),
+  );
+  if (eventsIdx === -1) {
+    lines.splice(headerIdx + 1, 0, rendered);
+    await fs.writeFile(file, lines.join('\n'), 'utf8');
+    return;
+  }
+
+  // The existing value may span several lines; consume until brackets balance.
+  let last = eventsIdx;
+  let depth = 0;
+  for (let i = eventsIdx; i < end; i++) {
+    const line = lines[i] ?? '';
+    depth += (line.match(/\[/g) ?? []).length - (line.match(/\]/g) ?? []).length;
+    last = i;
+    if (depth <= 0) break;
+  }
+
+  lines.splice(eventsIdx, last - eventsIdx + 1, rendered);
+  await fs.writeFile(file, lines.join('\n'), 'utf8');
 }
 
 /**

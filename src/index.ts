@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * @flashmandu/app-cli — Flashmandu developer CLI.
+ * @flashmandu/autohisab-business-cli — AutoHisab Business developer CLI.
  *
  * A Shopify-CLI-equivalent dev tool for building, testing and publishing
- * Flashmandu storefront apps. Verb semantics are reserved:
+ * AutoHisab Business storefront apps. Verb semantics are reserved:
  *
  *   - `dev`   = local dev loop ONLY (app server + tunnel + sandbox register).
  *               Never publishes and never contacts a production host.
@@ -43,21 +43,22 @@ import { makeDeployCommand } from './commands/deploy';
 import { makeHooksCommand } from './commands/hooks';
 import { makeLogsCommand } from './commands/logs';
 import { makePsCommand, makeStopCommand } from './commands/ps';
+import { makeCompletionCommand } from './commands/completion';
 
 const program = new Command();
 
 program
-  .name('flashmandu-app')
+  .name('autohisab-business')
   .description(
-    'Developer CLI for Flashmandu storefront apps.\n\n' +
+    'Developer CLI for AutoHisab Business storefront apps.\n\n' +
       '  dev      local dev loop (app server + tunnel + sandbox)\n' +
       '  deploy   build + push the image + submit for review (--target platform|vercel|self)\n' +
       '  push     submit the app for review (no build)\n' +
       '  init     scaffold a new app from the starter template\n' +
-      '  login    authenticate to a Flashmandu host\n' +
+      '  login    authenticate to an AutoHisab Business host\n' +
       '  logs     recent webhook deliveries (or platform pod logs with --platform)\n' +
       '  ps       list running dev app processes\n' +
-      "Run `flashmandu-app <command> --help` for each command's options.",
+      "Run `autohisab-business <command> --help` for each command's options.",
   )
   .option(
     '--base-url <url>',
@@ -83,6 +84,7 @@ program.addCommand(makeHooksCommand());
 program.addCommand(makeLogsCommand());
 program.addCommand(makePsCommand());
 program.addCommand(makeStopCommand());
+program.addCommand(makeCompletionCommand(program));
 
 program.exitOverride();
 

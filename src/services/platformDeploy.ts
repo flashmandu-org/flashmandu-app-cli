@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import type { PlatformCapabilities } from './platformCapabilities';
 
 /**
- * Platform-target deployment logic for `flashmandu-app deploy --target platform`.
+ * Platform-target deployment logic for `autohisab-business deploy --target platform`.
  *
  * The CLI compiles in NO production host (the spec promise). The registry
  * address and platform-hosting availability both come from the platform's
@@ -42,14 +42,14 @@ export function resolveTenantRegistry(input: RegistryResolutionInput): string {
   const environment = capabilities?.environment ?? 'this platform';
   throw new Error(
     `${environment} does not advertise a tenant registry, so --target platform cannot run there. ` +
-      `For local development run \`flashmandu-app dev\` (tunnel + registration, no Docker needed); ` +
+      `For local development run \`autohisab-business dev\` (tunnel + registration, no Docker needed); ` +
       `otherwise deploy with --target self or --target vercel.`,
   );
 }
 
 /**
  * The refusal shown when the logged-in platform cannot host platform apps.
- * Names `flashmandu-app dev` because that is the local path a developer
+ * Names `autohisab-business dev` because that is the local path a developer
  * reaching for `--target platform` actually wants.
  */
 export function platformHostingRefusal(caps: PlatformCapabilities | null): string {
@@ -57,7 +57,7 @@ export function platformHostingRefusal(caps: PlatformCapabilities | null): strin
   return (
     `--target platform is not available against ${environment}: platform hosting needs the ` +
       `tenant cluster, which only exists in production. For local development run ` +
-      `\`flashmandu-app dev\` (tunnel + registration, no Docker), or deploy to your own host ` +
+      `\`autohisab-business dev\` (tunnel + registration, no Docker), or deploy to your own host ` +
       `with --target self / --target vercel.`
   );
 }
@@ -88,7 +88,7 @@ export async function assertPlatformDeployReady(
   deps: PlatformDeployDeps,
 ): Promise<void> {
   if (!(await deps.isLoggedIn())) {
-    throw new Error('Not logged in. Run `flashmandu-app login` first.');
+    throw new Error('Not logged in. Run `autohisab-business login` first.');
   }
 
   if (!caps || !caps.platform_hosting) {
@@ -105,7 +105,7 @@ export async function assertPlatformDeployReady(
   if (!deps.dockerOnPath()) {
     throw new Error(
       'Docker is required for --target platform: the CLI builds and pushes the image locally. ' +
-        'Install Docker, or for local development run `flashmandu-app dev` instead (no Docker needed).',
+        'Install Docker, or for local development run `autohisab-business dev` instead (no Docker needed).',
     );
   }
 

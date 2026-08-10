@@ -157,7 +157,7 @@ async function waitForEdgeReady(url: string, budgetMs = 20000, stepMs = 1000): P
   console.warn(
     `\n  ⚠  Tunnel URL did not confirm reachable within ${Math.round(budgetMs / 1000)}s ` +
       `(${url}). If the embed shows "server IP address could not be found", wait a few ` +
-      `seconds and refresh, or re-run \`flashmandu-app dev\`.\n`,
+      `seconds and refresh, or re-run \`autohisab-business dev\`.\n`,
   );
   void lastErr;
 }

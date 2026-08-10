@@ -112,7 +112,7 @@ export function ensureDocker(): void {
   console.log('  Starting Docker runtime…');
   if (!awaitDaemon(90)) {
     throw new Error(
-      `Docker was installed but the daemon didn't come up within 90s. Open it manually (e.g. launch OrbStack from Applications), wait for it to finish setup, and rerun \`flashmandu-app deploy\`.`,
+      `Docker was installed but the daemon didn't come up within 90s. Open it manually (e.g. launch OrbStack from Applications), wait for it to finish setup, and rerun \`autohisab-business deploy\`.`,
     );
   }
 }

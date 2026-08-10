@@ -1,4 +1,4 @@
-# Acme Flashmandu App (PHP)
+# Acme AutoHisab Business App (PHP)
 
 A framework-free PHP skeleton for a Flashmandu **remote app**. No framework, no
 composer install needed for the dev loop — just PHP 8.2+.
@@ -9,8 +9,10 @@ composer install needed for the dev loop — just PHP 8.2+.
   contract: the identity homepage, the OAuth PKCE endpoints
   (`/oauth/authorize`, `/oauth/callback`, `/oauth/token`), and the HMAC-verified
   webhook receiver (`/webhooks/flashmandu`).
-- `src/WebhookVerifier.php` — the HMAC verifier, written to be dropped into any
-  Laravel/Symfony/raw-PHP app. Feed it `php://input` and the request headers.
+- `src/WebhookVerifier.php` — a dependency-free HMAC verifier so `php -S` works
+  before `composer install`. Feed it `php://input` and the request headers.
+  **On composer, delete it and use `Flashmandu\AppSdk\Webhooks\Verifier`** from
+  `flashmandu/app-sdk` — same algorithm, typed result, PSR-7-aware headers.
 - `src/Manifest.php` — `AppProvider` implementation for **in-process** installs
   (Track A: a composer package inside the platform). Requires
   `flashmandu/app-sdk` (`composer install`). Not needed for the remote dev loop.
@@ -20,7 +22,7 @@ composer install needed for the dev loop — just PHP 8.2+.
 ## Dev loop
 
 ```bash
-flashmandu-app dev --app-command "php -S localhost:3000 -t public"
+autohisab-business dev --app-command "php -S localhost:3000 -t public"
 ```
 
 The CLI starts this server, opens a public tunnel, registers the app on the
@@ -35,6 +37,7 @@ Credentials delivered by the platform at install are persisted to
 ## Moving to production
 
 Mount the four endpoints from `public/index.php` in your real app (Laravel,
-Symfony, Slim — anything), keep the `WebhookVerifier`, store the install-time
+Symfony, Slim — anything), swap `WebhookVerifier` for the SDK's
+`Flashmandu\AppSdk\Webhooks\Verifier`, store the install-time
 `api_token` / `webhook_secret` in your own secret store, and submit with
-`flashmandu-app push`.
+`autohisab-business push`.

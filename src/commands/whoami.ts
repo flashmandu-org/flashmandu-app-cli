@@ -11,7 +11,7 @@ interface MeResponse {
   subscribed_events?: string[];
 }
 
-/** `flashmandu-app whoami` — verify the stored token against `GET /api/apps/me`. */
+/** `autohisab-business whoami` — verify the stored token against `GET /api/apps/me`. */
 export function makeWhoamiCommand(): Command {
   return new Command('whoami')
     .description('Show the currently authenticated developer / app identity.')
