@@ -1,4 +1,4 @@
-import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
@@ -87,23 +87,58 @@ export const defaultRunner: Runner = (cmd, args, cwd) => {
   execFileSync(cmd, args, { cwd, stdio: 'inherit' });
 };
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Delete every OTHER tarball belonging to this package still sitting in
+ * `vendor/` — e.g. after syncing to 0.4.0, a stale
+ * `flashmandu-app-bridge-0.3.0.tgz` left next to the new one (verified in
+ * `~/nextjs/showcase/vendor/`, which kept BOTH 0.3.0 and 0.4.0 copies of both
+ * packages after a sync). Stale vendored kits are the exact problem this
+ * project exists to remove, so a superseded tarball must not survive a sync.
+ *
+ * Matches only THIS package's tarball name — `flashmandu-app-bridge-*.tgz`
+ * must not also delete `flashmandu-app-bridge-ui-*.tgz`, so the regex
+ * requires the version to start immediately after the package's own prefix.
+ */
+function removeSupersededTarballs(vendorDir: string, name: string, keep: string): void {
+  if (!existsSync(vendorDir)) return;
+  const prefix = name.replace('@', '').replace('/', '-');
+  const re = new RegExp(`^${escapeRegExp(prefix)}-\\d+\\.\\d+\\.\\d+\\.tgz$`);
+
+  for (const entry of readdirSync(vendorDir)) {
+    if (entry === keep) continue;
+    if (!re.test(entry)) continue;
+    const full = path.join(vendorDir, entry);
+    if (statSync(full).isFile()) {
+      rmSync(full, { force: true });
+    }
+  }
+}
+
 /**
  * Rewrite the app onto the pinned tgz-vendored kits: copy the tarballs from
  * this CLI's `assets/kits/` into the app's `vendor/`, point the two `file:`
- * deps at them, delete the legacy `vendor/app-bridge{,-ui}/` directory copies,
- * and `npm install`.
+ * deps at them, delete the legacy `vendor/app-bridge{,-ui}/` directory copies
+ * AND any other-version tarball of the same package, and `npm install`.
  */
 export function kitSync(cwd: string, run: Runner = defaultRunner, assetsDir: string = ASSETS_DIR): void {
   const pkgPath = path.join(cwd, 'package.json');
   const pkg = readPackageJson(cwd);
   pkg.dependencies = pkg.dependencies ?? {};
+  const vendorDir = path.join(cwd, 'vendor');
 
   for (const [name, pinned] of Object.entries(PINNED_KITS)) {
     const tgz = tgzFilename(name, pinned);
-    cpSync(path.join(assetsDir, tgz), path.join(cwd, 'vendor', tgz));
+    cpSync(path.join(assetsDir, tgz), path.join(vendorDir, tgz));
 
     // Retire directory-style vendoring (spec §2.2 — the silently-stale copies).
-    rmSync(path.join(cwd, 'vendor', shortName(name)), { recursive: true, force: true });
+    rmSync(path.join(vendorDir, shortName(name)), { recursive: true, force: true });
+
+    // Retire superseded tgz-style vendoring of the SAME package.
+    removeSupersededTarballs(vendorDir, name, tgz);
 
     pkg.dependencies[name] = `file:vendor/${tgz}`;
   }
