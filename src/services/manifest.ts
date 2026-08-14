@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import * as TOML from '@iarna/toml';
 import { z } from 'zod';
@@ -861,6 +862,35 @@ function jsonErrorPosition(message: string): number | undefined {
  *   JSON, or JSON that does not parse to an array — naming the file and, for
  *   a syntax error, the line/column.
  */
+/**
+ * Parse a blueprint file's already-read raw content into an element tree, or
+ * throw {@link SectionBlueprintError} with file + line/column context.
+ * Factored out of {@link resolveStorefrontSections} so the sync path
+ * ({@link resolveStorefrontSectionsSync}, used by `doctor`'s
+ * `section-blueprint-valid` rule) shares the exact same JSON-validity and
+ * position-reporting logic instead of a second copy that could drift.
+ */
+function parseBlueprintJson(relFile: string, raw: string): Array<Record<string, unknown>> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const pos = jsonErrorPosition(msg);
+    if (pos !== undefined) {
+      const { line, column } = lineColumnAt(raw, pos);
+      throw new SectionBlueprintError(relFile, msg, line, column);
+    }
+    throw new SectionBlueprintError(relFile, msg);
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new SectionBlueprintError(relFile, 'must contain a JSON array of element-tree nodes');
+  }
+
+  return parsed as Array<Record<string, unknown>>;
+}
+
 export async function resolveStorefrontSections(
   dir: string,
   sections: StorefrontSection[],
@@ -884,24 +914,59 @@ export async function resolveStorefrontSections(
         throw new SectionBlueprintError(relFile, msg);
       }
 
-      let parsed: unknown;
+      elementTree = parseBlueprintJson(relFile, raw);
+    }
+
+    resolved.push({
+      type: section.type,
+      name: section.name,
+      source: section.source ?? 'blueprint',
+      category: section.category,
+      element_tree: elementTree,
+      settings: section.settings,
+      bindings: section.bindings,
+      endpoint_path: section.endpoint_path,
+      schema_version: section.schema_version,
+    });
+  }
+
+  return resolved;
+}
+
+/**
+ * Synchronous counterpart to {@link resolveStorefrontSections}. Every other
+ * `doctor` rule (`doctor-rules.ts`) is a synchronous filesystem scan — pulling
+ * async into `DoctorRule#check` would ripple into `runDoctor`, `init`'s
+ * post-scaffold doctor run, and all 15 existing rule tests, for the sake of
+ * one rule. This shares {@link parseBlueprintJson} and the same
+ * `SectionBlueprintError` (file/line/column) shape with the async path used
+ * by `section dev`, so the two never drift on what counts as a valid
+ * blueprint file.
+ */
+export function resolveStorefrontSectionsSync(
+  dir: string,
+  sections: StorefrontSection[],
+): ResolvedStorefrontSection[] {
+  const resolved: ResolvedStorefrontSection[] = [];
+
+  for (const section of sections) {
+    let elementTree = section.element_tree;
+
+    if (!elementTree && section.blueprint_file) {
+      const relFile = section.blueprint_file;
+      const file = path.isAbsolute(relFile) ? relFile : path.join(dir, relFile);
+      if (!existsSync(file)) {
+        throw new SectionBlueprintError(relFile, 'file not found');
+      }
+      let raw: string;
       try {
-        parsed = JSON.parse(raw);
+        raw = readFileSync(file, 'utf8');
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        const pos = jsonErrorPosition(msg);
-        if (pos !== undefined) {
-          const { line, column } = lineColumnAt(raw, pos);
-          throw new SectionBlueprintError(relFile, msg, line, column);
-        }
         throw new SectionBlueprintError(relFile, msg);
       }
 
-      if (!Array.isArray(parsed)) {
-        throw new SectionBlueprintError(relFile, 'must contain a JSON array of element-tree nodes');
-      }
-
-      elementTree = parsed as Array<Record<string, unknown>>;
+      elementTree = parseBlueprintJson(relFile, raw);
     }
 
     resolved.push({

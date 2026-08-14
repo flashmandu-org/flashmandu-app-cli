@@ -546,3 +546,172 @@ describe('page-chrome-wired', () => {
     expect(findings.some((f) => !f.ok && f.severity === 'error')).toBe(false);
   });
 });
+
+describe('section-blueprint-valid', () => {
+  const manifestHeader = [
+    'name = "Doctor Check App"',
+    'version = "1.0.0"',
+    'authorize_url = "https://example.com/authorize"',
+    'token_url = "https://example.com/token"',
+    'webhook_url = "https://example.com/webhooks"',
+    '',
+  ].join('\n');
+
+  function manifestWith(sectionToml: string): string {
+    return `${manifestHeader}${sectionToml}`;
+  }
+
+  it('passes trivially when the app declares no [[storefront_sections]] at all', async () => {
+    const dir = await tempDir();
+    await write(dir, 'flashmandu.app.toml', manifestHeader);
+    expect(rule('section-blueprint-valid').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('passes trivially when there is no manifest file', async () => {
+    const dir = await tempDir();
+    expect(rule('section-blueprint-valid').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('passes with a valid blueprint_file section', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'flashmandu.app.toml',
+      manifestWith(
+        [
+          '[[storefront_sections]]',
+          'type = "events-calendar"',
+          'name = "Events Calendar"',
+          'source = "blueprint"',
+          'blueprint_file = "sections/events-calendar.json"',
+          '',
+        ].join('\n'),
+      ),
+    );
+    await write(dir, 'sections/events-calendar.json', '[{"type": "container", "children": []}]');
+    expect(rule('section-blueprint-valid').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('passes with a valid inline element_tree section', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'flashmandu.app.toml',
+      manifestWith(
+        [
+          '[[storefront_sections]]',
+          'type = "events-calendar"',
+          'name = "Events Calendar"',
+          'source = "blueprint"',
+          'element_tree = [{ type = "container" }]',
+          '',
+        ].join('\n'),
+      ),
+    );
+    expect(rule('section-blueprint-valid').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('fails naming the path when blueprint_file does not exist', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'flashmandu.app.toml',
+      manifestWith(
+        [
+          '[[storefront_sections]]',
+          'type = "events-calendar"',
+          'name = "Events Calendar"',
+          'source = "blueprint"',
+          'blueprint_file = "sections/missing.json"',
+          '',
+        ].join('\n'),
+      ),
+    );
+    const findings = rule('section-blueprint-valid').check(dir);
+    expect(findings.some((f) => !f.ok && f.file === 'sections/missing.json' && /file not found/.test(f.detail ?? ''))).toBe(
+      true,
+    );
+    expect(findings.every((f) => f.ok || f.severity === 'error')).toBe(true);
+  });
+
+  it('fails naming file and position when blueprint_file is malformed JSON', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'flashmandu.app.toml',
+      manifestWith(
+        [
+          '[[storefront_sections]]',
+          'type = "events-calendar"',
+          'name = "Events Calendar"',
+          'source = "blueprint"',
+          'blueprint_file = "sections/broken.json"',
+          '',
+        ].join('\n'),
+      ),
+    );
+    await write(dir, 'sections/broken.json', '[\n  { "type": "container", }\n]');
+    const findings = rule('section-blueprint-valid').check(dir);
+    const failure = findings.find((f) => !f.ok && f.file === 'sections/broken.json');
+    expect(failure).toBeDefined();
+    expect(failure?.line).toBeDefined();
+    expect(failure?.detail).toMatch(/line \d+, column \d+/);
+  });
+
+  it('fails a blueprint source with neither inline element_tree nor blueprint_file', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'flashmandu.app.toml',
+      manifestWith(
+        [
+          '[[storefront_sections]]',
+          'type = "events-calendar"',
+          'name = "Events Calendar"',
+          'source = "blueprint"',
+          '',
+        ].join('\n'),
+      ),
+    );
+    const findings = rule('section-blueprint-valid').check(dir);
+    expect(findings.some((f) => !f.ok && /blueprint_file.*element_tree/.test(f.detail ?? ''))).toBe(true);
+  });
+
+  it('fails an endpoint source without endpoint_path', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'flashmandu.app.toml',
+      manifestWith(
+        [
+          '[[storefront_sections]]',
+          'type = "live-stock"',
+          'name = "Live Stock"',
+          'source = "endpoint"',
+          '',
+        ].join('\n'),
+      ),
+    );
+    const findings = rule('section-blueprint-valid').check(dir);
+    expect(findings.some((f) => !f.ok && /endpoint_path/.test(f.detail ?? ''))).toBe(true);
+  });
+
+  it('passes a valid endpoint source that declares endpoint_path', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'flashmandu.app.toml',
+      manifestWith(
+        [
+          '[[storefront_sections]]',
+          'type = "live-stock"',
+          'name = "Live Stock"',
+          'source = "endpoint"',
+          'endpoint_path = "/sections/live-stock"',
+          '',
+        ].join('\n'),
+      ),
+    );
+    expect(rule('section-blueprint-valid').check(dir).every((f) => f.ok)).toBe(true);
+  });
+});

@@ -1,8 +1,16 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
+import * as TOML from '@iarna/toml';
 
 import { kitStatus } from './kit';
 import { stripComments, stripCommentsLines } from './commentStrip';
+import {
+  MANIFEST_FILENAME,
+  ManifestSchema,
+  SectionBlueprintError,
+  resolveStorefrontSectionsSync,
+  type StorefrontSection,
+} from './manifest';
 
 /**
  * `doctor` — static, offline checks over an app's source tree. Each rule
@@ -775,6 +783,74 @@ const pageChromeWired: DoctorRule = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// 16. Incident: `section dev` (Tier 1 declarative storefront sections, Task
+//     1.5) shipped with no `doctor` coverage — a developer could declare
+//     `[[storefront_sections]]` with a typo'd `blueprint_file`, malformed
+//     JSON, or a source missing its required field (`blueprint` without
+//     `element_tree`/`blueprint_file`, `endpoint` without `endpoint_path`)
+//     and only find out at push time, or worse at install time on the
+//     platform. Node TYPES are deliberately NOT this rule's business: the
+//     host's `AppSectionValidator` owns that catalog, and vendoring a copy of
+//     it here would drift the moment the platform adds an element — see the
+//     same reasoning already recorded on `StorefrontSectionSchema` in
+//     manifest.ts. This rule checks shape only.
+// ---------------------------------------------------------------------------
+const sectionBlueprintValid: DoctorRule = {
+  name: 'section-blueprint-valid',
+  check(cwd) {
+    const manifestPath = path.join(cwd, MANIFEST_FILENAME);
+    if (!existsSync(manifestPath)) {
+      return [pass('section-blueprint-valid')];
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = TOML.parse(readFileSync(manifestPath, 'utf8'));
+    } catch {
+      // Malformed TOML is `readManifest`'s (and `push`'s) concern, not this
+      // rule's — it has nothing section-shaped to check.
+      return [pass('section-blueprint-valid')];
+    }
+
+    const sectionsRaw = (parsed as { storefront_sections?: unknown }).storefront_sections;
+    if (!Array.isArray(sectionsRaw) || sectionsRaw.length === 0) {
+      // An app declaring no sections is not this rule's business — inapplicable,
+      // not failing.
+      return [pass('section-blueprint-valid')];
+    }
+
+    const findings: Finding[] = [];
+
+    // Same schema `section dev`/`push` validate against: 'blueprint' needs
+    // element_tree or blueprint_file, 'endpoint' needs endpoint_path.
+    const result = ManifestSchema.safeParse(parsed);
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        if (issue.path[0] !== 'storefront_sections') continue;
+        findings.push(fail('section-blueprint-valid', issue.message, { file: MANIFEST_FILENAME }));
+      }
+    }
+
+    // blueprint_file existence + JSON validity, reusing the exact parsing
+    // core `section dev`'s resolveStorefrontSections uses — SectionBlueprintError
+    // carries file/line/column for a JSON syntax error.
+    for (const raw of sectionsRaw as StorefrontSection[]) {
+      try {
+        resolveStorefrontSectionsSync(cwd, [raw]);
+      } catch (err) {
+        if (err instanceof SectionBlueprintError) {
+          findings.push(fail('section-blueprint-valid', err.message, { file: err.file, line: err.line }));
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    return findings.length > 0 ? findings : [pass('section-blueprint-valid')];
+  },
+};
+
 export const DOCTOR_RULES: DoctorRule[] = [
   noFmOverride,
   frameHeaders,
@@ -791,4 +867,5 @@ export const DOCTOR_RULES: DoctorRule[] = [
   appCssBudget,
   typographyScale,
   pageChromeWired,
+  sectionBlueprintValid,
 ];
