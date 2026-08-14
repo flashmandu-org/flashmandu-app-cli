@@ -42,6 +42,7 @@ import { makePsCommand, makeStopCommand } from './commands/ps';
 import { makeCompletionCommand } from './commands/completion';
 import { makeKitCommand } from './commands/kit';
 import { makeDoctorCommand } from './commands/doctor';
+import { makeUpgradeCommand } from './commands/upgrade';
 
 const program = new Command();
 
@@ -58,6 +59,7 @@ program
       '  ps       list running dev app processes\n' +
       '  kit      status/sync the vendored bridge SDK (app-bridge, app-bridge-ui)\n' +
       '  doctor   static checks for the recorded remote-app incidents\n' +
+      '  upgrade  re-apply kit-owned template files (next.config.js, route factories, …)\n' +
       "Run `autohisab-business <command> --help` for each command's options.",
   )
   .option(
@@ -86,6 +88,7 @@ program.addCommand(makePsCommand());
 program.addCommand(makeStopCommand());
 program.addCommand(makeKitCommand());
 program.addCommand(makeDoctorCommand());
+program.addCommand(makeUpgradeCommand());
 program.addCommand(makeCompletionCommand(program));
 
 program.exitOverride();

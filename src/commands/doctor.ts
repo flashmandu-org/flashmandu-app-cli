@@ -30,6 +30,30 @@ function printFinding(finding: Finding): void {
   }
 }
 
+/**
+ * Print the full ✓/✗ table for a set of findings and the summary line.
+ * Shared by the `doctor` command and `init` (which runs doctor once, right
+ * after scaffolding, so a broken template is caught the moment it is
+ * generated rather than on the developer's first manual `doctor` run).
+ * Returns `true` when there were zero `error`-severity failures.
+ */
+export function printDoctorReport(findings: Finding[]): boolean {
+  for (const finding of findings) {
+    printFinding(finding);
+  }
+
+  const errors = findings.filter((f) => !f.ok && f.severity === 'error');
+  const warnings = findings.filter((f) => !f.ok && f.severity === 'warn');
+
+  console.log('');
+  if (errors.length === 0) {
+    console.log(chalk.green(`✓ doctor: all checks passed${warnings.length ? ` (${warnings.length} warning(s))` : ''}.`));
+    return true;
+  }
+  console.log(chalk.red(`✗ doctor: ${errors.length} check(s) failed.`));
+  return false;
+}
+
 export function makeDoctorCommand(): Command {
   return new Command('doctor')
     .description('Run static checks for the recorded remote-app incidents.')
@@ -37,19 +61,8 @@ export function makeDoctorCommand(): Command {
     .action((opts: { dir: string }) => {
       const cwd = path.resolve(opts.dir);
       const findings = runDoctor(cwd);
-
-      for (const finding of findings) {
-        printFinding(finding);
-      }
-
-      const errors = findings.filter((f) => !f.ok && f.severity === 'error');
-      const warnings = findings.filter((f) => !f.ok && f.severity === 'warn');
-
-      console.log('');
-      if (errors.length === 0) {
-        console.log(chalk.green(`✓ doctor: all checks passed${warnings.length ? ` (${warnings.length} warning(s))` : ''}.`));
-      } else {
-        console.log(chalk.red(`✗ doctor: ${errors.length} check(s) failed.`));
+      const ok = printDoctorReport(findings);
+      if (!ok) {
         process.exitCode = 1;
       }
     });

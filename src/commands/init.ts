@@ -4,6 +4,8 @@ import { select, input, confirm } from '@inquirer/prompts';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { serializeManifest, APP_SLUG_RE, type AppManifest } from '../services/manifest';
+import { kitSync } from '../services/kit';
+import { runDoctor, printDoctorReport } from './doctor';
 
 /**
  * `autohisab-business init` — scaffold a new app from one of the bundled
@@ -255,6 +257,33 @@ export async function scaffoldApp(
   return 'done';
 }
 
+/**
+ * After a successful scaffold: vendor the pinned kit tgz files (`kit sync`)
+ * and print the `doctor` report, so a template regression is caught the
+ * moment an app is generated rather than on the developer's first manual
+ * `doctor` run. Only the `next-js` template has a `package.json`/vendored kit
+ * at all — `php-remote` has neither, and this is a no-op for it.
+ */
+async function syncKitAndReportDoctor(target: string): Promise<void> {
+  const hasPackageJson = await fs
+    .stat(path.join(target, 'package.json'))
+    .then((s) => s.isFile())
+    .catch(() => false);
+  if (!hasPackageJson) {
+    return;
+  }
+
+  try {
+    kitSync(target);
+    console.log(chalk.dim('  Kit vendored to the pinned version (autohisab-business kit sync).'));
+  } catch (err) {
+    console.log(chalk.yellow(`! kit sync skipped: ${(err as Error).message}`));
+  }
+
+  console.log('');
+  printDoctorReport(runDoctor(target));
+}
+
 export function makeInitCommand(): Command {
   const cmd = new Command('init')
     .description('Scaffold a new AutoHisab Business app from a template.')
@@ -267,6 +296,7 @@ export function makeInitCommand(): Command {
     .action(async (dir: string, opts: Partial<Record<string, string>>) => {
       const result = await scaffoldApp(dir, opts);
       if (result === 'done') {
+        await syncKitAndReportDoctor(path.resolve(dir));
         console.log(chalk.dim('  Next: edit flashmandu.app.toml, then `autohisab-business dev`.'));
       }
     });
