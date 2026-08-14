@@ -288,6 +288,22 @@ describe('typography-scale', () => {
     expect(rule('typography-scale').check(dir).every((f) => f.ok)).toBe(true);
   });
 
+  it('permits em values, which scale with the token-sized parent', async () => {
+    // The CLI template itself ships `code, pre { font-size: 0.85em }` — flagging
+    // it would make a freshly scaffolded app fail its own doctor run.
+    const dir = await tempDir();
+    await write(dir, 'app/globals.css', 'code,\npre {\n  font-size: 0.85em;\n}\n');
+    expect(rule('typography-scale').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('ignores third-party CSS vendored at any depth', async () => {
+    // interactive-map ships leaflet.css under public/vendor/; scanning it
+    // produced 7 findings against CSS the app does not own and must not edit.
+    const dir = await tempDir();
+    await write(dir, 'public/vendor/leaflet/leaflet.css', '.leaflet-tip {\n  font-size: 12px;\n}\n');
+    expect(rule('typography-scale').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
   it('fails when app CSS hardcodes a font-size literal off the scale', async () => {
     const dir = await tempDir();
     await write(dir, 'app/globals.css', '.app-label {\n  font-size: 0.8rem;\n}\n');

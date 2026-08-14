@@ -50,7 +50,14 @@ function walk(cwd: string, dir: string, test: (relPath: string) => boolean, acc:
 /** All non-vendor, non-generated source files under `cwd` matching one of the extensions. */
 function sourceFiles(cwd: string, extensions: string[], opts: { includeVendor?: boolean } = {}): string[] {
   return walk(cwd, '.', (rel) => {
-    if (!opts.includeVendor && (rel === 'vendor' || rel.startsWith(`vendor${path.sep}`))) return false;
+    /*
+     * Skip vendored third-party code at ANY depth, not just a top-level
+     * `vendor/`. Apps also vendor libraries under `public/vendor/…` (e.g.
+     * interactive-map ships leaflet.css there), and scanning those produced
+     * 7 false "off-scale font-size" findings against CSS the app does not own
+     * and must not edit.
+     */
+    if (!opts.includeVendor && rel.split(path.sep).includes('vendor')) return false;
     return extensions.some((ext) => rel.endsWith(ext));
   });
 }
@@ -514,7 +521,16 @@ const appCssBudget: DoctorRule = {
 //     in each app — the actual cause of "fonts look wrong" reports.
 // ---------------------------------------------------------------------------
 const FM_TEXT_VAR_RE = /^var\(\s*--fm-text-(xs|sm|base|lg|eyebrow)\s*(,[^)]*)?\)$/;
-const RELATIVE_KEYWORD_RE = /^(inherit|initial|unset|revert|100%|1em)$/;
+/*
+ * `em` is permitted at any multiple, unlike `rem`/`px`. An em value is
+ * relative to its parent's size, which on a kit-styled page is itself a
+ * --fm-text-* token, so `0.85em` SCALES WITH the design system instead of
+ * stepping outside it. The template's own `code, pre { font-size: 0.85em }`
+ * is the canonical example — flagging it would make a freshly scaffolded app
+ * fail its own doctor run. Absolute literals (rem/px/pt) are what break the
+ * scale, and those still fail.
+ */
+const RELATIVE_KEYWORD_RE = /^(inherit|initial|unset|revert|100%|[0-9.]+em)$/;
 
 /** True if a font-size value is permitted by the --fm-text-* scale rule. */
 function isAllowedFontSizeValue(raw: string): boolean {
