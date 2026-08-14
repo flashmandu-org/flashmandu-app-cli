@@ -206,6 +206,13 @@ export const ENDPOINTS = {
    */
   schedulesSync: '/api/apps/schedules/sync',
   schedules: '/api/apps/schedules',
+  /**
+   * Tier 1 no-server dev loop (`section dev`). REPLACES the calling dev
+   * install's declared `[[storefront_sections]]` — dev-environment only on
+   * the host, authenticated with the APP's own api_token (not the developer
+   * login token, which resolves to the dev/cli app).
+   */
+  devSections: '/api/apps/dev/sections',
 } as const;
 
 /**

@@ -125,7 +125,45 @@ export type AppManifest = {
   webhooks?: WebhooksSection;
   /** Declarative `[[schedules]]` blocks synced alongside webhooks. */
   schedules?: ScheduleEntry[];
+  /**
+   * Tier 1 declarative storefront sections — `[[storefront_sections]]`. Each
+   * entry either carries `element_tree` inline or names a `blueprint_file`
+   * relative to the manifest for the CLI to inline at read/push time (see
+   * {@link resolveStorefrontSections}). The host never reads `blueprint_file`
+   * itself — {@see SectionDefinition::fromArray} only reads `element_tree`.
+   */
+  storefront_sections?: StorefrontSection[];
 };
+
+/**
+ * One `[[storefront_sections]]` declaration, as authored in the manifest
+ * (before `blueprint_file` is inlined into `element_tree`). Mirrors the host
+ * SDK's `Flashmandu\AppSdk\Storefront\SectionDefinition`.
+ */
+export interface StorefrontSection {
+  /** Stable key for this section within the app. Unique per install. */
+  type: string;
+  name: string;
+  /** 'blueprint' (default, no server) | 'static' | 'endpoint' (Tier 2). */
+  source?: 'blueprint' | 'static' | 'endpoint';
+  category?: string;
+  /**
+   * Path (relative to the app directory) to a JSON file whose top-level
+   * content IS the element tree — a JSON array of composable node objects.
+   * `section dev` reads and inlines it into `element_tree` before every push;
+   * the host's SDK docs it explicitly: it only ever reads `element_tree`.
+   */
+  blueprint_file?: string;
+  /** Inline element tree, when not sourced from `blueprint_file`. */
+  element_tree?: Array<Record<string, unknown>>;
+  /** Merchant-configurable fields, same shape as an embed block's. */
+  settings?: EmbedBlockSetting[];
+  /** Module/collection binding (Tier 1 §bindings) — passed through verbatim. */
+  bindings?: Record<string, unknown>;
+  /** Required when source is 'endpoint'. */
+  endpoint_path?: string;
+  schema_version?: number;
+}
 
 /**
  * The `[webhooks]` table in `flashmandu.app.toml`:
@@ -487,6 +525,44 @@ const ScheduleSchema = z.object({
   cron: z.string().min(1).max(120).optional(),
 });
 
+/**
+ * `[[storefront_sections]]`. Deliberately lenient on `element_tree` and
+ * `bindings` shape — the platform's `AppSectionValidator` is the real gate
+ * (it walks node types against its own catalog and rejects with a node path),
+ * and the CLI must not maintain a second copy of that catalog that could
+ * drift from the renderer. What IS enforced here is the same posture as
+ * everywhere else in this file: shape, not vocabulary.
+ */
+const StorefrontSectionSchema = z
+  .object({
+    type: z.string().min(1).max(191),
+    name: z.string().min(1).max(191),
+    source: z.enum(['blueprint', 'static', 'endpoint']).default('blueprint'),
+    category: z.string().max(120).optional(),
+    blueprint_file: z.string().min(1).optional(),
+    element_tree: z.array(z.record(z.string(), z.unknown())).optional(),
+    settings: z.array(EmbedBlockSettingSchema).optional(),
+    bindings: z.record(z.string(), z.unknown()).optional(),
+    endpoint_path: z.string().min(1).optional(),
+    schema_version: z.number().int().min(1).optional(),
+  })
+  .superRefine((s, ctx) => {
+    if (s.source === 'endpoint' && (!s.endpoint_path || s.endpoint_path.trim() === '')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `storefront_sections "${s.type}": source 'endpoint' requires 'endpoint_path'`,
+        path: ['endpoint_path'],
+      });
+    }
+    if (s.source === 'blueprint' && !s.blueprint_file && !s.element_tree) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `storefront_sections "${s.type}": source 'blueprint' requires 'blueprint_file' or an inline 'element_tree'`,
+        path: ['blueprint_file'],
+      });
+    }
+  });
+
 const ManifestInput = z.object({
   slug: SlugSchema.optional(),
   id: z
@@ -521,6 +597,7 @@ const ManifestInput = z.object({
   // superRefine below so the developer gets the platform's own wording rather
   // than a generic "array too long".
   schedules: z.array(ScheduleSchema).optional(),
+  storefront_sections: z.array(StorefrontSectionSchema).optional(),
 });
 
 /**
@@ -716,6 +793,131 @@ export function formatManifestIssues(error: z.ZodError): string {
     return `  • ${where}: ${issue.message}`;
   });
   return `${MANIFEST_FILENAME} is invalid:\n${lines.join('\n')}`;
+}
+
+/**
+ * A `blueprint_file` failed to read or parse. Always names the file and, for
+ * a JSON syntax error, the line/column — the developer is looking at their
+ * own file, not the CLI's internals, and "invalid JSON" alone costs them a
+ * bisect. Thrown by {@link resolveStorefrontSections}; callers (namely
+ * `section dev`) must catch this and refuse to push rather than syncing a
+ * shorter section list, which would silently clear the dev install's other
+ * sections.
+ */
+export class SectionBlueprintError extends Error {
+  constructor(
+    public readonly file: string,
+    public readonly detail: string,
+    public readonly line?: number,
+    public readonly column?: number,
+  ) {
+    const where = line !== undefined && column !== undefined ? ` at line ${line}, column ${column}` : '';
+    super(`${file}${where}: ${detail}`);
+    this.name = 'SectionBlueprintError';
+  }
+}
+
+/** One `[[storefront_sections]]` entry with `blueprint_file` resolved into `element_tree`. */
+export interface ResolvedStorefrontSection {
+  type: string;
+  name: string;
+  source: 'blueprint' | 'static' | 'endpoint';
+  category?: string;
+  element_tree?: Array<Record<string, unknown>>;
+  settings?: EmbedBlockSetting[];
+  bindings?: Record<string, unknown>;
+  endpoint_path?: string;
+  schema_version?: number;
+}
+
+/** Compute 1-based line/column for a character offset into `text`. */
+function lineColumnAt(text: string, offset: number): { line: number; column: number } {
+  let line = 1;
+  let lastNewline = -1;
+  for (let i = 0; i < offset && i < text.length; i++) {
+    if (text[i] === '\n') {
+      line++;
+      lastNewline = i;
+    }
+  }
+  return { line, column: offset - lastNewline };
+}
+
+/** Extract the character position `JSON.parse` reports in its SyntaxError message, if any. */
+function jsonErrorPosition(message: string): number | undefined {
+  const match = /position (\d+)/.exec(message);
+  return match?.[1] !== undefined ? Number.parseInt(match[1], 10) : undefined;
+}
+
+/**
+ * Resolve every `[[storefront_sections]]` declaration's `blueprint_file` into
+ * `element_tree`, reading each file relative to `dir` (the app directory).
+ *
+ * A section that already declares `element_tree` inline is passed through
+ * unchanged even if it also names a `blueprint_file` — the inline value wins,
+ * since it is what the developer is looking at in the manifest itself.
+ *
+ * @throws SectionBlueprintError on a missing file, a file that is not valid
+ *   JSON, or JSON that does not parse to an array — naming the file and, for
+ *   a syntax error, the line/column.
+ */
+export async function resolveStorefrontSections(
+  dir: string,
+  sections: StorefrontSection[],
+): Promise<ResolvedStorefrontSection[]> {
+  const resolved: ResolvedStorefrontSection[] = [];
+
+  for (const section of sections) {
+    let elementTree = section.element_tree;
+
+    if (!elementTree && section.blueprint_file) {
+      const relFile = section.blueprint_file;
+      const file = path.isAbsolute(relFile) ? relFile : path.join(dir, relFile);
+      let raw: string;
+      try {
+        raw = await fs.readFile(file, 'utf8');
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          throw new SectionBlueprintError(relFile, 'file not found');
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new SectionBlueprintError(relFile, msg);
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const pos = jsonErrorPosition(msg);
+        if (pos !== undefined) {
+          const { line, column } = lineColumnAt(raw, pos);
+          throw new SectionBlueprintError(relFile, msg, line, column);
+        }
+        throw new SectionBlueprintError(relFile, msg);
+      }
+
+      if (!Array.isArray(parsed)) {
+        throw new SectionBlueprintError(relFile, 'must contain a JSON array of element-tree nodes');
+      }
+
+      elementTree = parsed as Array<Record<string, unknown>>;
+    }
+
+    resolved.push({
+      type: section.type,
+      name: section.name,
+      source: section.source ?? 'blueprint',
+      category: section.category,
+      element_tree: elementTree,
+      settings: section.settings,
+      bindings: section.bindings,
+      endpoint_path: section.endpoint_path,
+      schema_version: section.schema_version,
+    });
+  }
+
+  return resolved;
 }
 
 /** Serialize a manifest to TOML (used by `app init`). */

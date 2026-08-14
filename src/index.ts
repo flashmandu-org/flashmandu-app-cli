@@ -34,6 +34,7 @@ import { makeWhoamiCommand } from './commands/whoami';
 import { makeConfigCommand } from './commands/config';
 import { makeInitCommand } from './commands/init';
 import { makeDevCommand } from './commands/dev';
+import { makeSectionCommand } from './commands/section';
 import { makePushCommand } from './commands/push';
 import { makeDeployCommand } from './commands/deploy';
 import { makeHooksCommand } from './commands/hooks';
@@ -51,6 +52,7 @@ program
   .description(
     'Developer CLI for AutoHisab Business storefront apps.\n\n' +
       '  dev      local dev loop (app server + tunnel + sandbox)\n' +
+      '  section  dev — no-server loop for [[storefront_sections]] blueprints\n' +
       '  deploy   build + push the image + submit for review (--target platform|vercel|self)\n' +
       '  push     submit the app for review (no build)\n' +
       '  init     scaffold a new app from the starter template\n' +
@@ -80,6 +82,7 @@ program.addCommand(makeWhoamiCommand());
 program.addCommand(makeConfigCommand());
 program.addCommand(makeInitCommand());
 program.addCommand(makeDevCommand());
+program.addCommand(makeSectionCommand());
 program.addCommand(makePushCommand());
 program.addCommand(makeDeployCommand());
 program.addCommand(makeHooksCommand());
