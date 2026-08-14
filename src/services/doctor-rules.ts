@@ -596,6 +596,130 @@ const typographyScale: DoctorRule = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// 15. Incident: bridge-ui's <Page> publishes page chrome (title, breadcrumbs,
+//     actions, the dirty ⇄ Save/Discard swap) to the host command bar through
+//     a pluggable hook that starts as an internal no-op — bridge-ui cannot
+//     import @flashmandu/app-bridge itself (it is also consumed as a bare
+//     stylesheet by PHP/Python runtimes), so every app must wire the hook
+//     once via `configurePageChrome(usePageChrome)`. Orbit was migrated onto
+//     <Page> and this wiring was never added: it type-checked, 127/127 tests
+//     passed, `next build` succeeded, and all 14 prior doctor rules reported
+//     clean — every page's chrome published to nothing, silently emptying
+//     the host command bar across the whole app. A second, independently
+//     verified failure mode governs where the call may live: it must sit
+//     inside a real 'use client' module that app/layout.tsx renders as JSX,
+//     never called at module scope in layout.tsx itself (a Server
+//     Component) — Next's RSC compiler swaps client-module exports for
+//     opaque proxies in the server graph, so calling the proxy directly
+//     fails `next build` page-data collection with a minified
+//     `TypeError: o is not a function` (hit both the template and tours).
+// ---------------------------------------------------------------------------
+const PAGE_IMPORT_RE = /import\s*\{([^}]*)\}\s*from\s*['"]@flashmandu\/app-bridge-ui\/react['"]/g;
+
+/** True if `file` has a real (non-comment) named import of `Page` from bridge-ui/react. */
+function importsPageComponent(cwd: string, file: string): boolean {
+  const content = codeContent(cwd, file);
+  PAGE_IMPORT_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = PAGE_IMPORT_RE.exec(content)) !== null) {
+    const names = (match[1] as string)
+      .split(',')
+      .map((n) => n.trim().split(/\s+as\s+/)[0]?.trim())
+      .filter(Boolean);
+    if (names.includes('Page')) return true;
+  }
+  return false;
+}
+
+/** Top-level `export function Name` / `export const Name` identifiers in raw source. */
+function exportedNames(content: string): string[] {
+  const names: string[] = [];
+  const fnRe = /export\s+function\s+(\w+)/g;
+  const constRe = /export\s+const\s+(\w+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = fnRe.exec(content)) !== null) names.push(m[1] as string);
+  while ((m = constRe.exec(content)) !== null) names.push(m[1] as string);
+  return names;
+}
+
+const pageChromeWired: DoctorRule = {
+  name: 'page-chrome-wired',
+  check(cwd) {
+    const files = sourceFiles(cwd, ['.ts', '.tsx', '.js', '.jsx']);
+
+    // Rule only applies to apps that actually render <Page> — an app that
+    // never imports it needs no wiring.
+    const usesPage = files.some((file) => importsPageComponent(cwd, file));
+    if (!usesPage) return [pass('page-chrome-wired')];
+
+    const callSites: { file: string; line: number }[] = [];
+    for (const file of files) {
+      const lines = codeLines(cwd, file);
+      lines.forEach((line, idx) => {
+        if (line.includes('configurePageChrome(')) {
+          callSites.push({ file, line: idx + 1 });
+        }
+      });
+    }
+
+    if (callSites.length === 0) {
+      return [
+        fail(
+          'page-chrome-wired',
+          'App imports <Page> from @flashmandu/app-bridge-ui/react but never calls configurePageChrome(usePageChrome) — <Page> falls back to a no-op hook and its chrome never reaches the host command bar',
+        ),
+      ];
+    }
+
+    const findings: Finding[] = [];
+    const validFiles: string[] = [];
+
+    for (const { file, line } of callSites) {
+      const content = codeContent(cwd, file);
+      const first = firstMeaningfulLine(content.split('\n'));
+      const startsClient = !!first && /^['"]use client['"]/.test(first.trim());
+      if (!startsClient) {
+        findings.push(
+          fail(
+            'page-chrome-wired',
+            "configurePageChrome(...) is called in a file that does not start with 'use client' — it must be a real client module rendered as JSX from app/layout.tsx, never called at Server Component module scope",
+            { file, line },
+          ),
+        );
+      } else {
+        validFiles.push(file);
+      }
+    }
+
+    if (validFiles.length === 0) {
+      return findings;
+    }
+
+    // Best-effort, warn-only: does any validly-wired module get referenced
+    // from a layout.tsx anywhere in the app? Matched by exported identifier
+    // name rather than resolved module graph, so it can miss true positives
+    // (e.g. a re-export chain) — that's why it's a warning, not a failure.
+    const layoutFiles = walk(cwd, 'app', (rel) => path.basename(rel) === 'layout.tsx');
+    const layoutContent = layoutFiles.map((f) => codeContent(cwd, f)).join('\n');
+    const referenced = validFiles.some((file) => {
+      const names = exportedNames(readFileSync(path.join(cwd, file), 'utf8'));
+      return names.some((name) => new RegExp(`\\b${name}\\b`).test(layoutContent));
+    });
+    if (!referenced) {
+      findings.push(
+        fail(
+          'page-chrome-wired',
+          'configurePageChrome(...) wiring exists but its module does not appear to be referenced from any app/layout.tsx — confirm it is actually rendered',
+          { severity: 'warn' },
+        ),
+      );
+    }
+
+    return findings.length > 0 ? findings : [pass('page-chrome-wired')];
+  },
+};
+
 export const DOCTOR_RULES: DoctorRule[] = [
   noFmOverride,
   frameHeaders,
@@ -611,4 +735,5 @@ export const DOCTOR_RULES: DoctorRule[] = [
   routeStates,
   appCssBudget,
   typographyScale,
+  pageChromeWired,
 ];

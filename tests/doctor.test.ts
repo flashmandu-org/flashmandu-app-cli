@@ -408,3 +408,80 @@ describe('typography-scale', () => {
     expect(findings.some((f) => !f.ok && f.file === 'app/widget.tsx' && f.line === 2)).toBe(true);
   });
 });
+
+describe('page-chrome-wired', () => {
+  const wiringModule =
+    "'use client';\n\nimport { usePageChrome } from '@flashmandu/app-bridge/react';\nimport { configurePageChrome } from '@flashmandu/app-bridge-ui/react';\n\nconfigurePageChrome(usePageChrome);\n\nexport function PageChromeSetup() {\n  return null;\n}\n";
+
+  const layoutRenderingIt = "import { PageChromeSetup } from './PageChromeSetup';\nexport default function Layout({ children }) {\n  return (\n    <html>\n      <body>\n        <PageChromeSetup />\n        {children}\n      </body>\n    </html>\n  );\n}\n";
+
+  it('passes when an app that never imports <Page> has no wiring', async () => {
+    const dir = await tempDir();
+    await write(dir, 'app/page.tsx', 'export default function Page() { return null; }');
+    expect(rule('page-chrome-wired').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('passes when <Page> is imported and correctly wired from a use-client module rendered by layout.tsx', async () => {
+    const dir = await tempDir();
+    await write(dir, 'app/page.tsx', "import { Page } from '@flashmandu/app-bridge-ui/react';\nexport default function Home() { return <Page title=\"Home\" />; }");
+    await write(dir, 'app/PageChromeSetup.tsx', wiringModule);
+    await write(dir, 'app/layout.tsx', layoutRenderingIt);
+    const findings = rule('page-chrome-wired').check(dir);
+    expect(findings.every((f) => f.ok)).toBe(true);
+  });
+
+  it('fails when <Page> is imported but configurePageChrome is never called', async () => {
+    const dir = await tempDir();
+    await write(dir, 'app/page.tsx', "import { Page } from '@flashmandu/app-bridge-ui/react';\nexport default function Home() { return <Page title=\"Home\" />; }");
+    const findings = rule('page-chrome-wired').check(dir);
+    expect(findings.every((f) => f.ok)).toBe(false);
+  });
+
+  it('fails when the only configurePageChrome mention is inside a comment', async () => {
+    const dir = await tempDir();
+    await write(dir, 'app/page.tsx', "import { Page } from '@flashmandu/app-bridge-ui/react';\nexport default function Home() { return <Page title=\"Home\" />; }");
+    await write(
+      dir,
+      'app/PageChromeSetup.tsx',
+      "'use client';\n// TODO: call configurePageChrome(usePageChrome) here once wired up\nexport function PageChromeSetup() { return null; }\n",
+    );
+    const findings = rule('page-chrome-wired').check(dir);
+    expect(findings.every((f) => f.ok)).toBe(false);
+  });
+
+  it('fails when the call exists but its file does not start with use client', async () => {
+    const dir = await tempDir();
+    await write(dir, 'app/page.tsx', "import { Page } from '@flashmandu/app-bridge-ui/react';\nexport default function Home() { return <Page title=\"Home\" />; }");
+    await write(
+      dir,
+      'app/PageChromeSetup.tsx',
+      "import { usePageChrome } from '@flashmandu/app-bridge/react';\nimport { configurePageChrome } from '@flashmandu/app-bridge-ui/react';\n\nconfigurePageChrome(usePageChrome);\n\nexport function PageChromeSetup() {\n  return null;\n}\n",
+    );
+    const findings = rule('page-chrome-wired').check(dir);
+    expect(findings.some((f) => !f.ok && f.file === 'app/PageChromeSetup.tsx')).toBe(true);
+  });
+
+  it('allows a leading marker comment before the use client directive', async () => {
+    const dir = await tempDir();
+    await write(dir, 'app/page.tsx', "import { Page } from '@flashmandu/app-bridge-ui/react';\nexport default function Home() { return <Page title=\"Home\" />; }");
+    await write(
+      dir,
+      'app/PageChromeSetup.tsx',
+      `/* @flashmandu-template app/PageChromeSetup.tsx@0.4.1 */\n${wiringModule}`,
+    );
+    await write(dir, 'app/layout.tsx', layoutRenderingIt);
+    const findings = rule('page-chrome-wired').check(dir);
+    expect(findings.every((f) => f.ok)).toBe(true);
+  });
+
+  it('warns (does not fail) when the wired module is never referenced from layout.tsx', async () => {
+    const dir = await tempDir();
+    await write(dir, 'app/page.tsx', "import { Page } from '@flashmandu/app-bridge-ui/react';\nexport default function Home() { return <Page title=\"Home\" />; }");
+    await write(dir, 'app/PageChromeSetup.tsx', wiringModule);
+    // No layout.tsx at all, or one that does not reference PageChromeSetup.
+    await write(dir, 'app/layout.tsx', 'export default function Layout({ children }) { return children; }');
+    const findings = rule('page-chrome-wired').check(dir);
+    expect(findings.some((f) => !f.ok && f.severity === 'warn')).toBe(true);
+    expect(findings.some((f) => !f.ok && f.severity === 'error')).toBe(false);
+  });
+});
