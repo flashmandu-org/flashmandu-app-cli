@@ -41,6 +41,7 @@ import { makeLogsCommand } from './commands/logs';
 import { makePsCommand, makeStopCommand } from './commands/ps';
 import { makeCompletionCommand } from './commands/completion';
 import { makeKitCommand } from './commands/kit';
+import { makeDoctorCommand } from './commands/doctor';
 
 const program = new Command();
 
@@ -56,6 +57,7 @@ program
       '  logs     recent webhook deliveries (or platform pod logs with --platform)\n' +
       '  ps       list running dev app processes\n' +
       '  kit      status/sync the vendored bridge SDK (app-bridge, app-bridge-ui)\n' +
+      '  doctor   static checks for the recorded remote-app incidents\n' +
       "Run `autohisab-business <command> --help` for each command's options.",
   )
   .option(
@@ -83,6 +85,7 @@ program.addCommand(makeLogsCommand());
 program.addCommand(makePsCommand());
 program.addCommand(makeStopCommand());
 program.addCommand(makeKitCommand());
+program.addCommand(makeDoctorCommand());
 program.addCommand(makeCompletionCommand(program));
 
 program.exitOverride();
