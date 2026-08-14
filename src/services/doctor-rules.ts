@@ -507,6 +507,64 @@ const appCssBudget: DoctorRule = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// 14. Incident: tours' app/globals.css carries 33 raw font-size declarations
+//     (0.8rem ×4, 0.75rem ×3, etc.) instead of the kit's --fm-text-* scale,
+//     so text renders at sizes the design system never defines, differently
+//     in each app — the actual cause of "fonts look wrong" reports.
+// ---------------------------------------------------------------------------
+const FM_TEXT_VAR_RE = /^var\(\s*--fm-text-(xs|sm|base|lg|eyebrow)\s*(,[^)]*)?\)$/;
+const RELATIVE_KEYWORD_RE = /^(inherit|initial|unset|revert|100%|1em)$/;
+
+/** True if a font-size value is permitted by the --fm-text-* scale rule. */
+function isAllowedFontSizeValue(raw: string): boolean {
+  const value = raw.trim().replace(/;$/, '').trim();
+  if (FM_TEXT_VAR_RE.test(value)) return true;
+  if (RELATIVE_KEYWORD_RE.test(value)) return true;
+  return false;
+}
+
+const typographyScale: DoctorRule = {
+  name: 'typography-scale',
+  check(cwd) {
+    const findings: Finding[] = [];
+
+    for (const file of sourceFiles(cwd, ['.css'])) {
+      const lines = readLines(cwd, file);
+      lines.forEach((line, idx) => {
+        const match = line.match(/font-size\s*:\s*([^;]+);?/);
+        if (!match) return;
+        const value = (match[1] as string).trim();
+        if (isAllowedFontSizeValue(value)) return;
+        findings.push(
+          fail('typography-scale', `Raw font-size "${value}" is off the --fm-text-* scale`, {
+            file,
+            line: idx + 1,
+          }),
+        );
+      });
+    }
+
+    for (const file of sourceFiles(cwd, ['.tsx'])) {
+      const lines = readLines(cwd, file);
+      lines.forEach((line, idx) => {
+        const match = line.match(/fontSize\s*:\s*['"]([^'"]+)['"]/);
+        if (!match) return;
+        const value = (match[1] as string).trim();
+        if (isAllowedFontSizeValue(value)) return;
+        findings.push(
+          fail('typography-scale', `Inline style fontSize "${value}" is off the --fm-text-* scale`, {
+            file,
+            line: idx + 1,
+          }),
+        );
+      });
+    }
+
+    return findings.length > 0 ? findings : [pass('typography-scale')];
+  },
+};
+
 export const DOCTOR_RULES: DoctorRule[] = [
   noFmOverride,
   frameHeaders,
@@ -521,4 +579,5 @@ export const DOCTOR_RULES: DoctorRule[] = [
   noThemePin,
   routeStates,
   appCssBudget,
+  typographyScale,
 ];

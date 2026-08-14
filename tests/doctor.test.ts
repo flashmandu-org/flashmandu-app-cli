@@ -276,3 +276,34 @@ describe('app-css-budget', () => {
     expect(findings.every((f) => f.severity === 'warn')).toBe(true);
   });
 });
+
+describe('typography-scale', () => {
+  it('passes when app CSS references the --fm-text-* scale', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'app/globals.css',
+      '.app-label {\n  font-size: var(--fm-text-sm);\n  font-size: var(--fm-text-sm, 0.875rem);\n}\n',
+    );
+    expect(rule('typography-scale').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('fails when app CSS hardcodes a font-size literal off the scale', async () => {
+    const dir = await tempDir();
+    await write(dir, 'app/globals.css', '.app-label {\n  font-size: 0.8rem;\n}\n');
+    const findings = rule('typography-scale').check(dir);
+    expect(findings.some((f) => !f.ok && f.file === 'app/globals.css' && f.line === 2)).toBe(true);
+    expect(findings.some((f) => !f.ok && f.severity === 'error')).toBe(true);
+  });
+
+  it('fails on an inline style fontSize literal in a .tsx file', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'app/widget.tsx',
+      "export function Widget() {\n  return <span style={{ fontSize: '0.75rem' }}>hi</span>;\n}\n",
+    );
+    const findings = rule('typography-scale').check(dir);
+    expect(findings.some((f) => !f.ok && f.file === 'app/widget.tsx' && f.line === 2)).toBe(true);
+  });
+});
