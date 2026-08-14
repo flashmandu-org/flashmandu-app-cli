@@ -31,6 +31,7 @@ export const KIT_OWNED_FILES: readonly string[] = [
   'next.config.js',
   'app/globals.css',
   'app/layout.tsx',
+  'app/PageChromeSetup.tsx',
   'app/loading.tsx',
   'app/error.tsx',
   'app/not-found.tsx',

@@ -4,22 +4,20 @@ import type { ReactNode } from 'react';
 // index.css is imported by globals.css — keep the styling entry point in one
 // place so override order stays predictable.
 import './globals.css';
-import { BridgeBootstrap, usePageChrome } from '@flashmandu/app-bridge/react';
+import { BridgeBootstrap } from '@flashmandu/app-bridge/react';
 import { UrlSync } from '@flashmandu/app-bridge/next';
-import { configurePageChrome, type PageChromeHook } from '@flashmandu/app-bridge-ui/react';
+import { PageChromeSetup } from './PageChromeSetup';
 
-// Teach `<Page>` (used throughout app/) how to reach the host, once, at
-// module scope — two callers of `usePageChrome` would fight over SET_PAGE
-// and the loser's title would win at random.
-//
-// The cast below works around a cross-package type mismatch in the SDK as
-// currently vendored (0.4.0): @flashmandu/app-bridge's `PageChromeAction`
-// types `variant` as required with `'ghost'`, while
-// @flashmandu/app-bridge-ui's own `PageAction` types it as optional with
-// `'default'`. The wiring itself is exactly what the kit's GUIDELINES.md
-// documents; only the mismatched parameter type is cast, so a real signature
-// change to `usePageChrome` still fails to compile here.
-configurePageChrome(usePageChrome as unknown as PageChromeHook);
+// `<Page>` (used throughout app/) is taught how to reach the host by
+// `PageChromeSetup`. That wiring MUST run from a `'use client'` module, not
+// here: this file is a Server Component, and `usePageChrome` /
+// `configurePageChrome` are both exported from `'use client'`-marked SDK
+// entry points. Calling them directly at Server Component module scope
+// resolves to RSC client-reference proxies, not the real functions, and
+// fails `next build`'s page-data collection with a minified
+// `TypeError: ... is not a function`. See PageChromeSetup.tsx for the full
+// explanation. Render it as an element below — never import and call its
+// exports here.
 
 export const metadata: Metadata = {
   title: 'Flashmandu App',
@@ -51,6 +49,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body suppressHydrationWarning>
+        <PageChromeSetup />
         <BridgeBootstrap />
         <UrlSync />
         {children}
