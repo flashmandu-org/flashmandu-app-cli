@@ -264,7 +264,28 @@ const noClientPrisma: DoctorRule = {
 // ---------------------------------------------------------------------------
 // 6. Incident: re-serializing the webhook body (parsing then re-stringifying
 //    JSON) before verifying broke the HMAC signature check.
+//
+// False positive (verified against showcase, 2026-08-14): the rule flagged
+// every `app/webhooks/**/route.ts`, including
+// `app/webhooks/purge-status/route.ts` — an unauthenticated GET status
+// endpoint that receives no webhook delivery, has no `Request` body, and
+// takes no `req` parameter at all. It can never have an HMAC to verify, so
+// applying a body-ordering rule to it is meaningless.
+//
+// The rule's real subject is a webhook RECEIVER: a route that handles a
+// request with a body. The only reliable static signal for that is which
+// HTTP method handlers the file exports — a POST/PUT/PATCH handler takes a
+// body, a GET/HEAD-only file never does. So: exempt any route.ts that
+// exports no POST/PUT/PATCH handler, keep flagging one that does and calls
+// req.json() before req.text() (and isn't built on createWebhookRoute).
 // ---------------------------------------------------------------------------
+const BODY_METHOD_RE = /export\s+(?:async\s+)?function\s+(?:POST|PUT|PATCH)\b|export\s+const\s+\{[^}]*\b(?:POST|PUT|PATCH)\b[^}]*\}|export\s+const\s+(?:POST|PUT|PATCH)\b/;
+
+/** True if `content` exports a POST/PUT/PATCH route handler (a body-bearing method). */
+function exportsBodyMethod(content: string): boolean {
+  return BODY_METHOD_RE.test(content);
+}
+
 const webhookRawBody: DoctorRule = {
   name: 'webhook-raw-body',
   check(cwd) {
@@ -274,6 +295,9 @@ const webhookRawBody: DoctorRule = {
     for (const file of files) {
       const content = codeContent(cwd, file);
       if (content.includes('createWebhookRoute(')) continue;
+      // A file with no POST/PUT/PATCH handler never receives a body to
+      // verify — GET/HEAD-only status or read endpoints are exempt.
+      if (!exportsBodyMethod(content)) continue;
 
       const textIdx = content.indexOf('.text(');
       const jsonIdx = content.indexOf('.json(');
@@ -321,22 +345,53 @@ const kitCurrent: DoctorRule = {
 // 8. Incident: tokens.css/components.css imported directly (not index.css)
 //    silently dropped the bundled Instrument Sans font in every app;
 //    interactive-map additionally double-imported the kit CSS.
+//
+// False positive (verified against showcase, 2026-08-14): showcase's
+// `tests/parity/class-contract.test.ts` (and `tests/kit/kit-exports.ts`)
+// `readFileSync`s the kit's dist CSS/JS files by path to assert class-name
+// contracts, e.g. `readFileSync(path.join(ROOT,
+// 'node_modules/@flashmandu/app-bridge-ui/dist/components.css'))`. The old
+// regex matched the bare path STRING anywhere in a line, so those
+// `readFileSync` calls counted as extra kit CSS imports and the app was
+// reported as importing the kit 2-3 times when it genuinely imports it once
+// (`app/globals.css`: `@import "@flashmandu/app-bridge-ui/dist/index.css";`).
+//
+// Fix: only count genuine import statements — a CSS `@import "…"` in a
+// stylesheet, or an ES `import …from '…'` / bare `import '…'` / `require('…')`
+// side-effect import in a source file — never an arbitrary string occurrence
+// such as inside a `readFileSync(...)` argument. Test files are additionally
+// excluded outright: a test asserting things ABOUT the kit's CSS (reading it
+// to check class names) is not the app importing it, regardless of what
+// string literals happen to appear in the assertion.
 // ---------------------------------------------------------------------------
-const KIT_CSS_RE = /@flashmandu\/app-bridge-ui\/dist\/(index|tokens|components|fonts)\.css/g;
+const KIT_CSS_PATH_RE = /@flashmandu\/app-bridge-ui\/dist\/(index|tokens|components|fonts)\.css/;
+const CSS_AT_IMPORT_RE = new RegExp(`@import\\s+["'][^"']*${KIT_CSS_PATH_RE.source}[^"']*["']`);
+const JS_IMPORT_RE = new RegExp(`import\\s+(?:[\\w*{}\\s,]+from\\s+)?["'][^"']*${KIT_CSS_PATH_RE.source}[^"']*["']`);
+const JS_REQUIRE_RE = new RegExp(`require\\(\\s*["'][^"']*${KIT_CSS_PATH_RE.source}[^"']*["']\\s*\\)`);
+
+/** True if `rel` is a test file — assertions ABOUT the kit are not the app importing it. */
+function isTestFile(rel: string): boolean {
+  const normalized = rel.split(path.sep).join('/');
+  if (normalized.startsWith('tests/') || normalized.includes('/tests/')) return true;
+  const base = path.basename(rel);
+  return /\.(test|spec)\.[jt]sx?$/.test(base);
+}
 
 const kitCssSingleEntry: DoctorRule = {
   name: 'kit-css-single-entry',
   check(cwd) {
-    const files = sourceFiles(cwd, ['.ts', '.tsx', '.css']);
+    const files = sourceFiles(cwd, ['.ts', '.tsx', '.css']).filter((rel) => !isTestFile(rel));
     const hits: { file: string; line: number; which: string }[] = [];
 
     for (const file of files) {
       const lines = codeLines(cwd, file);
+      const isCss = file.endsWith('.css');
       lines.forEach((line, idx) => {
-        KIT_CSS_RE.lastIndex = 0;
-        let match: RegExpExecArray | null;
-        while ((match = KIT_CSS_RE.exec(line)) !== null) {
-          hits.push({ file, line: idx + 1, which: match[1] as string });
+        const importRe = isCss ? CSS_AT_IMPORT_RE : JS_IMPORT_RE;
+        const match = line.match(importRe) ?? (isCss ? null : line.match(JS_REQUIRE_RE));
+        if (match) {
+          const which = (match[0].match(KIT_CSS_PATH_RE)?.[1] as string) ?? 'index';
+          hits.push({ file, line: idx + 1, which });
         }
       });
     }

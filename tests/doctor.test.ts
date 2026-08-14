@@ -160,6 +160,29 @@ describe('webhook-raw-body', () => {
     );
     expect(rule('webhook-raw-body').check(dir).every((f) => f.ok)).toBe(false);
   });
+
+  // False positive (showcase, verified 2026-08-14): a GET-only status route
+  // under app/webhooks/** with no body and no `req` parameter is not a
+  // webhook receiver and must not be flagged.
+  it('passes for a GET-only route with no request body under app/webhooks/**', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'app/webhooks/purge-status/route.ts',
+      "export async function GET(): Promise<Response> {\n  return new Response(JSON.stringify({ ok: true }));\n}",
+    );
+    expect(rule('webhook-raw-body').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('still fails a real POST receiver that json()s without text() first, even alongside a GET export', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'app/webhooks/mixed/route.ts',
+      'export async function GET(): Promise<Response> {\n  return new Response("ok");\n}\nexport async function POST(req: Request) {\n  const body = await req.json();\n  return new Response("ok");\n}',
+    );
+    expect(rule('webhook-raw-body').check(dir).every((f) => f.ok)).toBe(false);
+  });
 });
 
 describe('kit-current', () => {
@@ -215,6 +238,44 @@ describe('kit-css-single-entry', () => {
     const dir = await tempDir();
     await write(dir, 'app/layout.tsx', "import '@flashmandu/app-bridge-ui/dist/index.css';");
     await write(dir, 'app/globals.css', "@import '@flashmandu/app-bridge-ui/dist/index.css';");
+    expect(rule('kit-css-single-entry').check(dir).every((f) => f.ok)).toBe(false);
+  });
+
+  // False positive (showcase, verified 2026-08-14): a test that readFileSync's
+  // the kit's dist CSS path to assert class-name contracts is not the app
+  // importing the kit — the path is a string argument, not an import
+  // statement, and the file lives under tests/.
+  it('passes when the only real import is index.css and a test file readFileSync\'s tokens.css/components.css', async () => {
+    const dir = await tempDir();
+    await write(dir, 'app/globals.css', '@import "@flashmandu/app-bridge-ui/dist/index.css";');
+    await write(
+      dir,
+      'tests/parity/class-contract.test.ts',
+      "import { readFileSync } from 'node:fs';\nimport path from 'node:path';\nconst componentsCss = readFileSync(path.join(ROOT, 'node_modules/@flashmandu/app-bridge-ui/dist/components.css'), 'utf8');\nconst tokensCss = readFileSync(path.join(ROOT, 'node_modules/@flashmandu/app-bridge-ui/dist/tokens.css'), 'utf8');\n",
+    );
+    expect(rule('kit-css-single-entry').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('still fails a real duplicate import even with a readFileSync of the kit CSS elsewhere', async () => {
+    const dir = await tempDir();
+    await write(dir, 'app/globals.css', '@import "@flashmandu/app-bridge-ui/dist/index.css";');
+    await write(dir, 'app/layout.tsx', "import '@flashmandu/app-bridge-ui/dist/index.css';");
+    await write(
+      dir,
+      'tests/parity/class-contract.test.ts',
+      "import { readFileSync } from 'node:fs';\nconst tokensCss = readFileSync('node_modules/@flashmandu/app-bridge-ui/dist/tokens.css', 'utf8');\n",
+    );
+    expect(rule('kit-css-single-entry').check(dir).every((f) => f.ok)).toBe(false);
+  });
+
+  it('still fails a direct tokens.css import in non-test source even though test files are excluded', async () => {
+    const dir = await tempDir();
+    await write(dir, 'app/layout.tsx', "import '@flashmandu/app-bridge-ui/dist/tokens.css';");
+    await write(
+      dir,
+      'tests/parity/class-contract.test.ts',
+      "import { readFileSync } from 'node:fs';\nconst x = readFileSync('node_modules/@flashmandu/app-bridge-ui/dist/components.css', 'utf8');\n",
+    );
     expect(rule('kit-css-single-entry').check(dir).every((f) => f.ok)).toBe(false);
   });
 });
