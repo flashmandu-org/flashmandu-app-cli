@@ -74,6 +74,16 @@ describe('no-sidebar-links', () => {
     await write(dir, 'app/page.tsx', "useEffect(() => { setSidebarLinks([{ label: 'x' }]); }, []);");
     expect(rule('no-sidebar-links').check(dir).every((f) => f.ok)).toBe(false);
   });
+
+  it('ignores setSidebarLinks( mentioned only in a comment', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'app/page.tsx',
+      "// Do NOT call setSidebarLinks( here — use manifest nav_items instead.\nexport default function Page() { return null; }",
+    );
+    expect(rule('no-sidebar-links').check(dir).every((f) => f.ok)).toBe(true);
+  });
 });
 
 describe('no-pinned-dark', () => {
@@ -87,6 +97,16 @@ describe('no-pinned-dark', () => {
     const dir = await tempDir();
     await write(dir, 'app/layout.tsx', '<html data-fm-theme="dark"><body>hi</body></html>');
     expect(rule('no-pinned-dark').check(dir).every((f) => f.ok)).toBe(false);
+  });
+
+  it('ignores data-fm-theme="dark" mentioned only in a comment', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'app/layout.tsx',
+      '/* do not write data-fm-theme="dark" here */\n<html><body>hi</body></html>',
+    );
+    expect(rule('no-pinned-dark').check(dir).every((f) => f.ok)).toBe(true);
   });
 });
 
@@ -225,6 +245,16 @@ describe('no-native-dialogs', () => {
     await write(dir, 'app/page.tsx', 'if (window.confirm("Delete?")) { doIt(); }');
     expect(rule('no-native-dialogs').check(dir).every((f) => f.ok)).toBe(false);
   });
+
+  it('ignores window.confirm( mentioned only in a comment', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'app/page.tsx',
+      '// Never call window.confirm( here — use host dialogs.\nexport default function Page() { return null; }',
+    );
+    expect(rule('no-native-dialogs').check(dir).every((f) => f.ok)).toBe(true);
+  });
 });
 
 describe('no-theme-pin', () => {
@@ -238,6 +268,61 @@ describe('no-theme-pin', () => {
     const dir = await tempDir();
     await write(dir, 'app/layout.tsx', '<html data-fm-theme="light"><body>hi</body></html>');
     expect(rule('no-theme-pin').check(dir).every((f) => f.ok)).toBe(false);
+  });
+
+  it('ignores a mention of data-fm-theme inside a block comment', async () => {
+    // Reproduces the false positive found running the rule against
+    // ~/nextjs/tours/app/layout.tsx: lines 21 and 25 were prose inside a
+    // `/** … */` doc comment EXPLAINING that the attribute is deliberately
+    // not set, e.g. `<html lang="en" data-fm-theme="light">` shown as an
+    // example of what NOT to do.
+    const dir = await tempDir();
+    await write(
+      dir,
+      'app/layout.tsx',
+      [
+        '/**',
+        ' * THEMING: no data-fm-theme is set here, on purpose. Pin it only if',
+        ' * your app is deliberately single-theme:',
+        ' *',
+        ' *     <html lang="en" data-fm-theme="light">',
+        ' *',
+        ' * Hardcoding it is the easiest way to ship a broken app.',
+        ' */',
+        'export default function RootLayout() {',
+        '  return <html lang="en"><body>hi</body></html>;',
+        '}',
+      ].join('\n'),
+    );
+    expect(rule('no-theme-pin').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('ignores a mention of data-fm-theme inside a line comment', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'app/layout.tsx',
+      '// Example only: <html data-fm-theme="dark">\nexport default function L() { return <html><body>hi</body></html>; }',
+    );
+    expect(rule('no-theme-pin').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('still fails when the same token is real code, not a comment', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'app/layout.tsx',
+      [
+        '/**',
+        ' * THEMING doc comment, unrelated prose.',
+        ' */',
+        'export default function RootLayout() {',
+        '  return <html lang="en" data-fm-theme="dark"><body>hi</body></html>;',
+        '}',
+      ].join('\n'),
+    );
+    const findings = rule('no-theme-pin').check(dir);
+    expect(findings.some((f) => !f.ok && f.line === 5)).toBe(true);
   });
 });
 

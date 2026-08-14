@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { kitStatus } from './kit';
+import { stripComments, stripCommentsLines } from './commentStrip';
 
 /**
  * `doctor` — static, offline checks over an app's source tree. Each rule
@@ -62,8 +63,22 @@ function sourceFiles(cwd: string, extensions: string[], opts: { includeVendor?: 
   });
 }
 
-function readLines(cwd: string, relPath: string): string[] {
-  return readFileSync(path.join(cwd, relPath), 'utf8').split('\n');
+/**
+ * Comment-stripped lines of a source file, indexed identically to the raw
+ * file (see `commentStrip.ts` — a doctor rule that greps a line inside a
+ * comment explaining the very thing the rule polices is a false positive).
+ * CSS has no `//` comment syntax, so `.css` files keep `//` literal (it shows
+ * up inside `url(http://…)`).
+ */
+function codeLines(cwd: string, relPath: string): string[] {
+  const raw = readFileSync(path.join(cwd, relPath), 'utf8');
+  return stripCommentsLines(raw, { lineComments: !relPath.endsWith('.css') });
+}
+
+/** Comment-stripped whole-file content, for rules that scan across lines. */
+function codeContent(cwd: string, relPath: string): string {
+  const raw = readFileSync(path.join(cwd, relPath), 'utf8');
+  return stripComments(raw, { lineComments: !relPath.endsWith('.css') });
 }
 
 function pass(rule: string): Finding {
@@ -88,10 +103,10 @@ const noFmOverride: DoctorRule = {
     const selectorRe = /(^|[\s,{}])(\.fm-[a-zA-Z0-9_-]+)/;
 
     for (const file of files) {
-      const lines = readLines(cwd, file);
+      const lines = codeLines(cwd, file);
       lines.forEach((line, idx) => {
         const trimmed = line.trim();
-        if (trimmed.startsWith('/*') || trimmed.startsWith('//')) return;
+        if (trimmed === '') return;
         // Only selector lines redefine a rule — a line opening (or starting) a
         // ruleset with a `.fm-*` selector. Property usages (`var(--fm-…)`) are fine.
         const match = trimmed.match(selectorRe);
@@ -122,7 +137,7 @@ const frameHeaders: DoctorRule = {
     if (!existsSync(path.join(cwd, rel))) {
       return [fail('frame-headers', 'next.config.js not found', { file: rel })];
     }
-    const content = readFileSync(path.join(cwd, rel), 'utf8');
+    const content = codeContent(cwd, rel);
     const missing: string[] = [];
     const hasHeadersFn = /headers\s*\(\s*\)/.test(content);
     if (!hasHeadersFn) missing.push('headers() block');
@@ -149,7 +164,7 @@ const noSidebarLinks: DoctorRule = {
     const findings: Finding[] = [];
     const files = sourceFiles(cwd, ['.ts', '.tsx', '.js', '.jsx']);
     for (const file of files) {
-      const lines = readLines(cwd, file);
+      const lines = codeLines(cwd, file);
       lines.forEach((line, idx) => {
         if (line.includes('setSidebarLinks(')) {
           findings.push(
@@ -175,7 +190,7 @@ const noPinnedDark: DoctorRule = {
   check(cwd) {
     const findings: Finding[] = [];
     for (const file of sourceFiles(cwd, ['.tsx'])) {
-      const lines = readLines(cwd, file);
+      const lines = codeLines(cwd, file);
       lines.forEach((line, idx) => {
         if (line.includes('data-fm-theme="dark"')) {
           findings.push(
@@ -218,7 +233,7 @@ const noClientPrisma: DoctorRule = {
     const importRe = /from\s+['"](\.[^'"]+)['"]/g;
 
     for (const file of files) {
-      const content = readFileSync(path.join(cwd, file), 'utf8');
+      const content = codeContent(cwd, file);
       const lines = content.split('\n');
       const first = firstMeaningfulLine(lines);
       if (!first || !/^['"]use client['"]/.test(first.trim())) continue;
@@ -229,7 +244,7 @@ const noClientPrisma: DoctorRule = {
         const spec = match[1] as string;
         const resolved = resolveRelativeImport(cwd, file, spec);
         if (!resolved) continue;
-        const importedContent = readFileSync(path.join(cwd, resolved), 'utf8');
+        const importedContent = codeContent(cwd, resolved);
         if (importedContent.includes('@prisma/client')) {
           findings.push(
             fail(
@@ -257,7 +272,7 @@ const webhookRawBody: DoctorRule = {
     const findings: Finding[] = [];
 
     for (const file of files) {
-      const content = readFileSync(path.join(cwd, file), 'utf8');
+      const content = codeContent(cwd, file);
       if (content.includes('createWebhookRoute(')) continue;
 
       const textIdx = content.indexOf('.text(');
@@ -316,7 +331,7 @@ const kitCssSingleEntry: DoctorRule = {
     const hits: { file: string; line: number; which: string }[] = [];
 
     for (const file of files) {
-      const lines = readLines(cwd, file);
+      const lines = codeLines(cwd, file);
       lines.forEach((line, idx) => {
         KIT_CSS_RE.lastIndex = 0;
         let match: RegExpExecArray | null;
@@ -360,7 +375,7 @@ const kitButtonsOnly: DoctorRule = {
   check(cwd) {
     const findings: Finding[] = [];
     for (const file of sourceFiles(cwd, ['.tsx'])) {
-      const content = readFileSync(path.join(cwd, file), 'utf8');
+      const content = codeContent(cwd, file);
       const lines = content.split('\n');
       lines.forEach((line, idx) => {
         if (!/<button\b/.test(line)) return;
@@ -392,7 +407,7 @@ const noNativeDialogs: DoctorRule = {
     const findings: Finding[] = [];
     const dialogRe = /window\.(confirm|alert|prompt)\s*\(/;
     for (const file of sourceFiles(cwd, ['.ts', '.tsx', '.js', '.jsx'])) {
-      const lines = readLines(cwd, file);
+      const lines = codeLines(cwd, file);
       lines.forEach((line, idx) => {
         const match = line.match(dialogRe);
         if (match) {
@@ -419,7 +434,7 @@ const noThemePin: DoctorRule = {
     const findings: Finding[] = [];
     const files = walk(cwd, '.', (rel) => path.basename(rel) === 'layout.tsx');
     for (const file of files) {
-      const lines = readLines(cwd, file);
+      const lines = codeLines(cwd, file);
       lines.forEach((line, idx) => {
         if (/data-fm-theme=/.test(line)) {
           findings.push(
@@ -485,7 +500,7 @@ const appCssBudget: DoctorRule = {
     const badSelectors: string[] = [];
 
     for (const file of files) {
-      const lines = readLines(cwd, file).filter((l) => l.trim() !== '');
+      const lines = codeLines(cwd, file).filter((l) => l.trim() !== '');
       total += lines.length;
       if (!worst || lines.length > worst.lines) worst = { file, lines: lines.length };
 
@@ -546,7 +561,7 @@ const typographyScale: DoctorRule = {
     const findings: Finding[] = [];
 
     for (const file of sourceFiles(cwd, ['.css'])) {
-      const lines = readLines(cwd, file);
+      const lines = codeLines(cwd, file);
       lines.forEach((line, idx) => {
         const match = line.match(/font-size\s*:\s*([^;]+);?/);
         if (!match) return;
@@ -562,7 +577,7 @@ const typographyScale: DoctorRule = {
     }
 
     for (const file of sourceFiles(cwd, ['.tsx'])) {
-      const lines = readLines(cwd, file);
+      const lines = codeLines(cwd, file);
       lines.forEach((line, idx) => {
         const match = line.match(/fontSize\s*:\s*['"]([^'"]+)['"]/);
         if (!match) return;
