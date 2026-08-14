@@ -24,24 +24,25 @@
  *     page works against a real paginated API without restructuring.
  *
  * NOTE there is no page padding anywhere in this file, and there must not be.
- * `AppPage` renders the kit's `Container`, which carries the host's own
- * Items-index page box (24/16/128px below lg, 16/24/40px from lg up).
+ * `Page` owns the host's own Items-index page box (24/16/128px below lg,
+ * 16/24/40px from lg up) — never add your own margin or padding around it.
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   Badge,
   Button,
   EmptyState,
   FilterBar,
   IndexTable,
+  Page,
   Pagination,
   type FilterField,
   type FilterValue,
   type SortState,
 } from '@flashmandu/app-bridge-ui/react';
 import { useProfileId } from '@flashmandu/app-bridge/react';
-import { AppPage } from '@/lib/chrome';
 
 interface Item {
   id: number;
@@ -117,7 +118,8 @@ export default function ItemsPage() {
   const [selected, setSelected] = useState<Array<string | number>>([]);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('');
-  const { profileId } = useProfileId();
+  const bridgeStatus = useProfileId();
+  const profileId = bridgeStatus.status === 'ready' ? bridgeStatus.profileId : undefined;
 
   const filterValues = useMemo<Record<string, FilterValue>>(() => ({ status }), [status]);
 
@@ -142,7 +144,11 @@ export default function ItemsPage() {
   }, [query, status]);
 
   return (
-    <AppPage title="Items" crumbs={[{ label: 'Dashboard', path: '/' }, { label: 'Items' }]}>
+    <Page
+      title="Items"
+      crumbs={[{ label: 'Dashboard', path: '/' }, { label: 'Items' }]}
+      linkComponent={Link}
+    >
       {/* In the page, above the filter bar — NOT in the host command bar. */}
       <div className="fm-page-actions">
         <Button variant="primary" onClick={() => undefined}>
@@ -217,6 +223,6 @@ export default function ItemsPage() {
         }
         footer={<Pagination current={page} total={totalPages} onChange={setPage} />}
       />
-    </AppPage>
+    </Page>
   );
 }

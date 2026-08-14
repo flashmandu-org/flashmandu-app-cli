@@ -1,23 +1,23 @@
 'use client';
 
 import Link from 'next/link';
-import { Card, Section, Stat, StatGrid } from '@flashmandu/app-bridge-ui/react';
-import { AppPage } from '@/lib/chrome';
+import { Card, Page, Section, Stat, StatGrid } from '@flashmandu/app-bridge-ui/react';
 
 /**
  * Dashboard.
  *
  * Note what is NOT here: no page heading, no in-app title bar. The breadcrumb
  * and the "New item" button below are published to the HOST command bar by
- * `AppPage` → `usePageChrome`, which is what makes the embed read as a native
+ * `Page` → `usePageChrome`, which is what makes the embed read as a native
  * page instead of a website inside a box.
  */
-export default function Page() {
+export default function DashboardPage() {
   return (
-    <AppPage
+    <Page
       title="Dashboard"
       subtitle="Welcome to your AutoHisab Business app."
       crumbs={[{ label: 'Dashboard' }]}
+      linkComponent={Link}
       actions={[
         {
           id: 'new-item',
@@ -46,7 +46,7 @@ export default function Page() {
       >
         <Card title="Page chrome" subtitle="Declared, not drawn">
           <p className="fm-muted" style={{ margin: 0 }}>
-            Call <code>usePageChrome</code> (via <code>AppPage</code>) with your
+            Call <code>usePageChrome</code> (via <code>Page</code>) with your
             breadcrumbs, actions and dirty flag. The host renders them in its own
             command bar and posts clicks back by action id. Never render a
             desktop <code>&lt;h1&gt;</code> yourself.
@@ -72,6 +72,6 @@ export default function Page() {
           </p>
         </Card>
       </Section>
-    </AppPage>
+    </Page>
   );
 }

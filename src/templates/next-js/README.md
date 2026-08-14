@@ -11,26 +11,36 @@ dirty ⇄ Save/Discard swap live in the HOST command bar; the app declares them
 with `usePageChrome` and the host draws them. An in-page title bar is exactly
 what makes an embed look bolted-on.
 
-`lib/chrome.tsx` wraps that in one component:
+`@flashmandu/app-bridge-ui/react`'s `Page` wraps that in one component (wired
+once, in `app/layout.tsx`, via `configurePageChrome`):
 
 ```tsx
-<AppPage
+import Link from 'next/link';
+import { Page } from '@flashmandu/app-bridge-ui/react';
+
+<Page
   title="Items"
   crumbs={[{ label: 'Dashboard', path: '/' }, { label: 'Items' }]}
   actions={[{ id: 'new', label: 'New item', variant: 'primary', onSelect: create }]}
   dirty={form.isDirty}
+  linkComponent={Link}
 >
   …
-</AppPage>
+</Page>
 ```
 
-Below `lg`, where the host command bar is not visible, `AppPage` renders
-`MobilePageHeader` inside the iframe. It is `lg:hidden` in CSS, so the two
-never both appear and there is no hydration flash.
+Below `lg`, where the host command bar is not visible, `Page` renders the
+mobile breadcrumb + heading mirror inside the iframe. It is `lg:hidden` in
+CSS, so the two never both appear and there is no hydration flash.
 
 ## What's included
 
-- `lib/chrome.tsx` — `AppPage`: the one place page chrome is declared.
+- All shared server/client code — the OAuth route factories, the webhook
+  verifier + dedupe, the config loader, the GraphQL client, and `Page` itself
+  — now ships from `@flashmandu/app-bridge` (`/server`, `/next/routes`,
+  `/react`) and `@flashmandu/app-bridge-ui/react`. Nothing below re-implements
+  them; run `autohisab-business kit sync` to pull the pinned version and
+  `autohisab-business doctor` to check the app is still wired to it correctly.
 - `app/page.tsx` — dashboard. No heading; chrome comes from the host.
 - `app/items/page.tsx` — the standard list surface: `IndexTable` with sortable
   columns, a pinned first column, selection + bulk actions, pagination in the
@@ -39,27 +49,32 @@ never both appear and there is no hydration flash.
 - `app/(admin)/settings/page.tsx` — dirty-state example: while the form is
   dirty the host swaps its bar for native Save / Discard, which still call back
   into this page by action id.
-- `app/oauth/authorize/route.ts` — OAuth Authorize endpoint. The platform
-  redirects the merchant here with standard OAuth + PKCE (S256) params; this
-  route returns the merchant to the platform's callback with a `code` + the
-  original `state`.
-- `app/oauth/token/route.ts` — OAuth Token + credential-delivery endpoint.
-  Receives two POSTs from the platform: the PKCE code exchange, then the
-  credential delivery (`{api_token, webhook_secret, ...}` signed with HMAC).
-  Stores credentials in `.flashmandu/install.<app_id>.json` (gitignored).
-- `app/oauth/callback/route.ts` — developer convenience landing page. Not in
-  the host's OAuth contract.
-- `app/webhooks/flashmandu/route.ts` — webhook receiver. Verifies
-  `X-App-Signature` over `${X-App-Timestamp}.${rawBody}` keyed by
-  `FLASHMANDU_WEBHOOK_SECRET`, then dispatches the event.
-- `lib/hmac.ts` — constant-time HMAC verifier with timestamp-skew replay
-  defence.
-- `lib/config.ts` / `lib/flashmandu.ts` — env loader + minimal API client for
-  `GET /api/apps/me` and `GET /api/apps/hooks`.
-- `lib/revalidate.ts` — `purgePlatformEmbedCaches()`: call after any mutation
-  to data your embed blocks render or list as options, so the platform drops
-  the cached picker markup + dynamic-options payloads immediately instead of
-  waiting out the TTL.
+- `app/loading.tsx` / `app/error.tsx` / `app/not-found.tsx` — the route-state
+  scaffolds every screen inherits by default: a skeleton while a route
+  resolves, a retryable error callout, and an empty-state 404.
+- `app/oauth/{authorize,callback,token}/route.ts` — three-line factory calls
+  onto `createOAuthRoutes(loadConfig())`. See the SDK's `GUIDELINES.md` /
+  `README.md` for the full OAuth + credential-delivery contract these
+  implement.
+- `app/webhooks/flashmandu/route.ts` — `createWebhookRoute({ cfg, onUninstalled })`.
+  Verifies `X-App-Signature` over `${X-App-Timestamp}.${rawBody}`, dedupes on
+  `X-App-Delivery`, and calls `lib/purge.ts`'s `purgeProfileData` on
+  `app.uninstalled` / `profile.data.erased`.
+- `lib/purge.ts` — `purgeProfileData(profileId)`: delete/anonymize everything
+  this app stored for a profile on uninstall. Ships as a working no-op stub
+  (`{}`); fill it in as you add persistence.
+
+## Keeping the kit current
+
+```bash
+autohisab-business kit status   # installed vs CLI-pinned SDK versions
+autohisab-business kit sync     # vendor the pinned tgz, rewrite package.json, npm install
+autohisab-business doctor       # static checks against the recorded remote-app incidents
+autohisab-business upgrade      # re-apply kit-owned template files (next.config.js,
+                                 # route factories, route-state scaffolds) that are
+                                 # still at a known template version; reports
+                                 # hand-edited files as "skipped (forked)"
+```
 
 ## Local dev
 

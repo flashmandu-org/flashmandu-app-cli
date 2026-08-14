@@ -9,9 +9,9 @@
  */
 
 import { useState } from 'react';
-import { Card, Field, Input } from '@flashmandu/app-bridge-ui/react';
+import Link from 'next/link';
+import { Card, Field, Input, Page } from '@flashmandu/app-bridge-ui/react';
 import { BridgeContext } from '@flashmandu/app-bridge/react';
-import { AppPage } from '@/lib/chrome';
 
 export default function SettingsPage() {
   const [name, setName] = useState('');
@@ -20,11 +20,12 @@ export default function SettingsPage() {
   const dirty = name !== saved;
 
   return (
-    <AppPage
+    <Page
       title="Settings"
       subtitle="App-level configuration."
       crumbs={[{ label: 'Dashboard', path: '/' }, { label: 'Settings' }]}
       dirty={dirty}
+      linkComponent={Link}
       actions={[
         {
           id: 'save',
@@ -41,7 +42,7 @@ export default function SettingsPage() {
             }, 400);
           },
         },
-        { id: 'discard', label: 'Discard', variant: 'ghost', onSelect: () => setName(saved) },
+        { id: 'discard', label: 'Discard', variant: 'default', onSelect: () => setName(saved) },
       ]}
     >
       <Card title="General">
@@ -62,6 +63,6 @@ export default function SettingsPage() {
           readable back — <code>config list</code> shows key names only.
         </p>
       </Card>
-    </AppPage>
+    </Page>
   );
 }
