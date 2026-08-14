@@ -18,7 +18,7 @@ import path from 'node:path';
  * so, never silently clobber it.
  */
 
-export const TEMPLATE_VERSION = '0.4.0';
+export const TEMPLATE_VERSION = '0.4.1';
 
 /**
  * Kit-owned files, relative to the `next-js` template root — the wiring

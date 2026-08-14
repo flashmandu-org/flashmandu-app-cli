@@ -1,4 +1,4 @@
-/* @flashmandu-template app/PageChromeSetup.tsx@0.4.0 */
+/* @flashmandu-template app/PageChromeSetup.tsx@0.4.1 */
 'use client';
 
 /**
@@ -28,19 +28,16 @@
  * as an element — never by calling an export directly — which is the
  * supported way for a Server Component to pull in client behavior.
  *
- * The cast below works around a cross-package type mismatch in the SDK as
- * currently vendored (0.4.0): @flashmandu/app-bridge's `PageChromeAction`
- * types `variant` as required with `'ghost'`, while
- * @flashmandu/app-bridge-ui's own `PageAction` types it as optional with
- * `'default'`. The wiring itself is exactly what the kit's GUIDELINES.md
- * documents; only the mismatched parameter type is cast, so a real signature
- * change to `usePageChrome` still fails to compile here.
+ * No cast is needed here: app-bridge 0.4.2 / app-bridge-ui 0.4.1 unified the
+ * action `variant` contract (optional, identical union, `'default'`
+ * normalised to `'ghost'` before the wire), so `configurePageChrome(usePageChrome)`
+ * type-checks directly against the pinned SDK versions.
  */
 
 import { usePageChrome } from '@flashmandu/app-bridge/react';
-import { configurePageChrome, type PageChromeHook } from '@flashmandu/app-bridge-ui/react';
+import { configurePageChrome } from '@flashmandu/app-bridge-ui/react';
 
-configurePageChrome(usePageChrome as unknown as PageChromeHook);
+configurePageChrome(usePageChrome);
 
 /** Renders nothing; imported purely so `app/layout.tsx` can mount it as a client element. */
 export function PageChromeSetup(): null {
