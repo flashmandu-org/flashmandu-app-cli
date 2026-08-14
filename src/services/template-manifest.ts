@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { HISTORICAL_TEMPLATE_HASHES } from './template-manifest-history';
+
 /**
  * `autohisab-business upgrade` — re-applies KIT-OWNED template files (the
  * pure wiring boilerplate: `next.config.js`, the OAuth/webhook route
@@ -16,6 +18,17 @@ import path from 'node:path';
  * version — i.e. the developer never touched it. Any other hash means the
  * developer edited it on purpose, and `upgrade` must leave it alone and say
  * so, never silently clobber it.
+ *
+ * "Known template version" spans every version this CLI has ever shipped,
+ * not just the current one: `defaultManifest()` merges the CURRENT
+ * template's freshly-computed hashes with `HISTORICAL_TEMPLATE_HASHES`
+ * (`./template-manifest-history.ts`), a committed record of hashes for
+ * content that no longer exists in the working tree because a later release
+ * changed it. Without that historical record, an app scaffolded at an older
+ * template version has content that hashes to nothing the manifest knows,
+ * so it gets misreported `forked` and `upgrade` can never actually move it
+ * forward. See `template-manifest-history.ts` for the recording procedure —
+ * follow it every time `TEMPLATE_VERSION` bumps.
  */
 
 export const TEMPLATE_VERSION = '0.4.1';
@@ -90,14 +103,23 @@ export function mergeManifests(a: TemplateManifest, b: TemplateManifest): Templa
 }
 
 /**
- * The manifest this build of the CLI knows about: the current template
- * (`TEMPLATE_VERSION`), as shipped. There is no earlier entry — the pre-0.4.0
- * template carried no marker header at all, so a file still at that shape has
- * no recorded hash and is (correctly) treated as forked/unknown rather than
- * silently upgraded.
+ * The manifest this build of the CLI knows about: every HISTORICAL hash this
+ * CLI has ever shipped (`HISTORICAL_TEMPLATE_HASHES`, committed in
+ * `template-manifest-history.ts` — see that file for why a runtime hash of
+ * the current template alone can't cover superseded versions, and the
+ * procedure for keeping it current), merged with a fresh hash of the CURRENT
+ * template (`TEMPLATE_VERSION`), as shipped. `mergeManifests` lets a
+ * current-version entry override a stale historical one for the same
+ * version string, so re-running against an unchanged template is a no-op.
+ *
+ * There is no entry earlier than '0.4.0' — the pre-0.4.0 template carried no
+ * marker header at all, so a file still at that shape has no recorded hash
+ * and is (correctly) treated as forked/unknown rather than silently
+ * upgraded.
  */
 export function defaultManifest(): TemplateManifest {
-  return buildManifest(resolveTemplateRoot(), TEMPLATE_VERSION);
+  const current = buildManifest(resolveTemplateRoot(), TEMPLATE_VERSION);
+  return mergeManifests(HISTORICAL_TEMPLATE_HASHES, current);
 }
 
 export type UpgradeStatus = 'created' | 'upgraded' | 'unchanged' | 'forked';
