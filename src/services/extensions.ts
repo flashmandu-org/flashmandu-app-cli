@@ -83,6 +83,18 @@ export interface WireExtension {
   /** Embed-block compatibility keys. Present only on a desugared block. */
   type?: string;
   block_path?: string;
+  /**
+   * Style Surfaces. `style_surfaces` is authored per block/extension, but
+   * `style_var_prefix` / `style_schema_version` are APP-level manifest keys —
+   * they are FLATTENED onto every declaring entry here because
+   * `installed_apps.extensions` is the only channel that survives to the host,
+   * and `StyleSurfaceSchema::fromEmbedBlockPayload()` reads all three off the
+   * one block payload. Absent entirely on an entry that declares no surfaces,
+   * so a manifest without Style Surfaces produces a byte-identical payload.
+   */
+  style_surfaces?: unknown[];
+  style_var_prefix?: string;
+  style_schema_version?: number;
 }
 
 /** True when the developer authored the unified form. */
@@ -187,6 +199,7 @@ export function desugarEmbedBlock(block: EmbedBlock): ManifestExtension {
     schema_version: block.schema_version ?? 1,
     hosting_tier: block.hosting_tier ?? 'remote',
     settings: block.settings ?? [],
+    style_surfaces: block.style_surfaces,
   };
 }
 
@@ -222,6 +235,10 @@ function toWire(e: ManifestExtension, origin: string, embedBlockOf?: EmbedBlock)
     wire.block_path = embedBlockOf.block_path;
   }
 
+  if (e.style_surfaces && e.style_surfaces.length > 0) {
+    wire.style_surfaces = e.style_surfaces;
+  }
+
   return wire;
 }
 
@@ -245,5 +262,27 @@ export function buildExtensionPayload(manifest: AppManifest, origin: string): Wi
     payload.push(toWire(desugarEmbedBlock(block), origin, block));
   }
 
-  return payload;
+  return payload.map((wire) => flattenStyleNamespace(wire, manifest));
+}
+
+/**
+ * Copy the APP-level `style_var_prefix` / `style_schema_version` onto every
+ * entry that actually declares style surfaces.
+ *
+ * This is the CLI's half of a contract documented on the host side
+ * (`StyleSurfaceSchema`): those two keys are app-level facts with no app-level
+ * column to live in, so the host reads them back off each BLOCK payload. An
+ * entry that declares no surfaces is returned UNTOUCHED — no new keys, no
+ * payload churn for the apps that will never use this.
+ */
+function flattenStyleNamespace(wire: WireExtension, manifest: AppManifest): WireExtension {
+  if (!wire.style_surfaces || wire.style_surfaces.length === 0) {
+    return wire;
+  }
+
+  return {
+    ...wire,
+    style_var_prefix: manifest.style_var_prefix,
+    style_schema_version: manifest.style_schema_version ?? 1,
+  };
 }

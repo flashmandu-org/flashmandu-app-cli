@@ -10,8 +10,8 @@
     "start": "next start -p ${PORT:-3000}"
   },
   "dependencies": {
-    "@flashmandu/app-bridge": "file:vendor/flashmandu-app-bridge-0.4.3.tgz",
-    "@flashmandu/app-bridge-ui": "file:vendor/flashmandu-app-bridge-ui-0.4.1.tgz",
+    "@flashmandu/app-bridge": "file:vendor/flashmandu-app-bridge-0.5.0.tgz",
+    "@flashmandu/app-bridge-ui": "file:vendor/flashmandu-app-bridge-ui-0.5.0.tgz",
     "next": "^14.2.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"

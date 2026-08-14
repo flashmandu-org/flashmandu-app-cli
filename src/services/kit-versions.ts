@@ -5,6 +5,6 @@
  * and `kit sync` read only from this map.
  */
 export const PINNED_KITS: Record<string, string> = {
-  '@flashmandu/app-bridge': '0.4.3',
-  '@flashmandu/app-bridge-ui': '0.4.1',
+  '@flashmandu/app-bridge': '0.5.0',
+  '@flashmandu/app-bridge-ui': '0.5.0',
 };

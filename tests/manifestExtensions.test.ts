@@ -277,3 +277,92 @@ describe('the scaffold', () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 });
+
+/**
+ * Style Surfaces (design §3.1). `style_var_prefix` / `style_schema_version` are
+ * APP-level manifest keys, but the host reads them back off each BLOCK payload
+ * — `installed_apps.extensions` is the only channel that survives. The CLI is
+ * what flattens them, so these tests are that contract from this side; the host
+ * half is `StyleSurfaceSchema::fromEmbedBlockPayload()`.
+ */
+describe('style surfaces', () => {
+  const STYLED = `${BASE}
+style_var_prefix     = "--tours"
+style_schema_version = 1
+
+[[embed_blocks]]
+type       = "virtual-tour"
+name       = "Virtual Tour"
+block_path = "/embed/virtual-tour"
+
+  [[embed_blocks.style_surfaces]]
+  key  = "pin_card"
+  name = "Info card"
+
+    [[embed_blocks.style_surfaces.slots]]
+    key     = "radius"
+    label   = "Corner radius"
+    type    = "length"
+    var     = "--tours-card-radius"
+    default = "12px"
+    units   = ["px", "rem"]
+    min     = 0
+    max     = 48
+`;
+
+  it('flattens the app-level namespace keys onto every declaring block', () => {
+    const [block] = payloadFor(STYLED);
+
+    expect(block.style_var_prefix).toBe('--tours');
+    expect(block.style_schema_version).toBe(1);
+    expect(block.style_surfaces).toHaveLength(1);
+  });
+
+  it('keeps per-slot constraint keys the CLI does not model', () => {
+    const [block] = payloadFor(STYLED);
+    const slot = (block.style_surfaces as Array<{ slots: Array<Record<string, unknown>> }>)[0].slots[0];
+
+    expect(slot.units).toEqual(['px', 'rem']);
+    expect(slot.min).toBe(0);
+    expect(slot.max).toBe(48);
+  });
+
+  it('defaults the schema version when only a prefix is declared', () => {
+    const [block] = payloadFor(STYLED.replace('style_schema_version = 1\n', ''));
+
+    expect(block.style_schema_version).toBe(1);
+  });
+
+  it('adds no style keys at all to a block that declares no surfaces', () => {
+    const [block] = payloadFor(`${BASE}
+style_var_prefix = "--tours"
+
+[[embed_blocks]]
+type       = "plain"
+name       = "Plain"
+block_path = "/embed/plain"
+`);
+
+    expect(block).not.toHaveProperty('style_var_prefix');
+    expect(block).not.toHaveProperty('style_schema_version');
+    expect(block.style_surfaces).toBeUndefined();
+  });
+
+  it('refuses surfaces declared without an app-level prefix', () => {
+    expect(() => parse(STYLED.replace('style_var_prefix     = "--tours"\n', ''))).toThrow(
+      /must also declare app-level `style_var_prefix`/,
+    );
+  });
+
+  it('refuses a slot var outside the app namespace', () => {
+    expect(() => parse(STYLED.replace('"--tours-card-radius"', '"--fm-primary"'))).toThrow(
+      /outside this app's namespace/,
+    );
+  });
+
+  it('refuses an app claiming the platform --fm- namespace', () => {
+    expect(() => parse(STYLED.replace('"--tours"', '"--fm-tours"').replace('--tours-card-radius', '--fm-tours-card-radius'))).toThrow(
+      /may not claim the platform --fm- namespace/,
+    );
+  });
+});

@@ -99,6 +99,16 @@ export type AppManifest = {
    * desugared into the unified extension shape. */
   embed_blocks?: EmbedBlock[];
   /**
+   * The custom-property namespace every Style Surface variable this app
+   * declares must live under, e.g. `--tours`. An APP-level fact, but the host
+   * reads it back off each BLOCK's payload — `installed_apps.extensions` is
+   * the only channel that survives, and there is no app-level column for it.
+   * `buildExtensionPayload()` is what flattens it onto every pushed block.
+   */
+  style_var_prefix?: string;
+  /** The version the app's style declarations were authored against. */
+  style_schema_version?: number;
+  /**
    * Unified `[[extensions]]` declarations — the one table for every host
    * surface. Either shape is accepted (see {@link ManifestExtension}); the
    * unified one is always what is sent.
@@ -154,6 +164,49 @@ export interface EmbedBlockSetting {
   dynamic_options_path?: string;
 }
 
+/**
+ * One merchant-editable visual knob on a {@link StyleSurfaceDeclaration}.
+ *
+ * The value TYPES are shape-checked here, never allow-listed: the host owns the
+ * closed vocabulary (`App\Services\Storefront\Themes\DesignTokenType`) and adds
+ * to it, exactly like TARGET_RE and SCOPE_RE. What the CLI *does* enforce
+ * locally is the namespace rule, because that one is a security boundary the
+ * host refuses the whole block over — catching it at `push` time is far kinder
+ * than an install-time "failed to hydrate" warning.
+ */
+export interface StyleSlotDeclaration {
+  key: string;
+  label?: string;
+  description?: string;
+  type: string;
+  var: string;
+  control?: string;
+  default?: unknown;
+  dark_default?: unknown;
+  inherits?: string;
+  themed?: boolean;
+  replaces?: string;
+  units?: string[];
+  min?: number;
+  max?: number;
+  options?: Array<{ value: string; label?: string }>;
+  families?: string[];
+  max_layers?: number;
+  allow_reference?: boolean;
+}
+
+/**
+ * A named region of the app's own UI whose visuals a merchant may restyle from
+ * the platform's page builder — `[[embed_blocks.style_surfaces]]`.
+ */
+export interface StyleSurfaceDeclaration {
+  key: string;
+  name: string;
+  description?: string;
+  preview_hint?: string;
+  slots: StyleSlotDeclaration[];
+}
+
 export interface EmbedBlock {
   type: string;
   name: string;
@@ -171,6 +224,8 @@ export interface EmbedBlock {
   schema_version?: number;
   /** Merchant-configurable fields for the block. */
   settings?: EmbedBlockSetting[];
+  /** Merchant-editable VISUALS for the block (Style Surfaces). */
+  style_surfaces?: StyleSurfaceDeclaration[];
 }
 
 /**
@@ -236,6 +291,8 @@ export interface ManifestExtension {
   hosting_tier?: string;
   /** Merchant-configurable fields, same shape as an embed block's. */
   settings?: EmbedBlockSetting[];
+  /** Merchant-editable VISUALS, same shape as an embed block's. */
+  style_surfaces?: StyleSurfaceDeclaration[];
 }
 
 /**
@@ -291,6 +348,39 @@ const EmbedBlockSettingSchema = z.object({
   dynamic_options_path: z.string().optional(),
 });
 
+/** A custom-property name: `--lowercase-with-dashes`. */
+const CSS_VAR_RE = /^--[a-z0-9-]+$/;
+
+/**
+ * Slot value types are shape-checked, not allow-listed (see
+ * {@link StyleSlotDeclaration}). `.passthrough()` keeps per-type constraint
+ * keys the host understands and this CLI has never heard of — a new host type
+ * must not need a CLI release before an app may declare it.
+ */
+const StyleSlotSchema = z
+  .object({
+    key: z.string().regex(/^[a-z0-9_]+$/, 'style slot key must be lowercase alphanumeric with underscores'),
+    label: z.string().max(120).optional(),
+    description: z.string().max(1000).optional(),
+    type: z.string().min(1),
+    var: z.string().regex(CSS_VAR_RE, 'style slot `var` must be a custom-property name such as --tours-card-bg'),
+    control: z.string().max(60).optional(),
+    inherits: z.string().regex(CSS_VAR_RE).optional(),
+    themed: z.boolean().optional(),
+    replaces: z.string().max(96).optional(),
+  })
+  .passthrough();
+
+const StyleSurfaceSchema = z.object({
+  key: z
+    .string()
+    .regex(/^[a-z0-9_:]+$/, 'style surface key must be lowercase alphanumeric with underscores (an admin surface may use an "admin:" prefix)'),
+  name: z.string().min(1).max(120),
+  description: z.string().max(1000).optional(),
+  preview_hint: z.string().max(120).optional(),
+  slots: z.array(StyleSlotSchema).default([]),
+});
+
 const EmbedBlockSchema = z.object({
   type: z.string().min(1),
   name: z.string().min(1),
@@ -303,6 +393,7 @@ const EmbedBlockSchema = z.object({
   scopes: z.array(z.string().regex(SCOPE_RE)).default([]),
   schema_version: z.number().int().min(1).default(1),
   settings: z.array(EmbedBlockSettingSchema).default([]),
+  style_surfaces: z.array(StyleSurfaceSchema).optional(),
 });
 
 /**
@@ -341,6 +432,7 @@ const UnifiedExtensionSchema = z.object({
   replaces: z.string().min(1).max(96).optional(),
   hosting_tier: z.enum(['remote', 'trusted']).default('remote'),
   settings: z.array(EmbedBlockSettingSchema).default([]),
+  style_surfaces: z.array(StyleSurfaceSchema).optional(),
 });
 
 /**
@@ -420,6 +512,8 @@ const ManifestInput = z.object({
     .regex(/^sha256:[0-9a-f]{64}$/, 'image_digest must be sha256:<64 hex> (a digest, never a tag)')
     .optional(),
   embed_blocks: z.array(EmbedBlockSchema).optional(),
+  style_var_prefix: z.string().regex(CSS_VAR_RE, 'style_var_prefix must be a custom-property prefix such as --tours').optional(),
+  style_schema_version: z.number().int().min(1).optional(),
   extensions: z.array(ExtensionSchema).optional(),
   nav_items: z.array(NavItemSchema).optional(),
   webhooks: WebhooksSchema.optional(),
@@ -428,6 +522,65 @@ const ManifestInput = z.object({
   // than a generic "array too long".
   schedules: z.array(ScheduleSchema).optional(),
 });
+
+/**
+ * The two rules the host refuses a whole block over, checked here so a
+ * developer sees them at `push` time instead of as an install-time
+ * "failed to hydrate" warning:
+ *
+ *  1. declaring style surfaces without an app-level `style_var_prefix`;
+ *  2. a slot `var` outside that prefix — most sharply, one under `--fm-`,
+ *     which would repaint the platform kit for the whole embed rather than
+ *     the app's own card.
+ *
+ * Mirrors `Flashmandu\Apps\Extensions\StyleSlot::assertVarInNamespace()`.
+ */
+function validateStyleSurfaces(m: {
+  style_var_prefix?: string;
+  embed_blocks?: Array<{ type?: string; style_surfaces?: unknown }>;
+  extensions?: Array<{ handle?: string; style_surfaces?: unknown }>;
+}): string[] {
+  const messages: string[] = [];
+  const prefix = (m.style_var_prefix ?? '').trim();
+
+  const declarations: Array<{ owner: string; surfaces: StyleSurfaceDeclaration[] }> = [];
+  for (const block of m.embed_blocks ?? []) {
+    if (Array.isArray(block.style_surfaces) && block.style_surfaces.length > 0) {
+      declarations.push({ owner: block.type ?? 'embed_blocks', surfaces: block.style_surfaces });
+    }
+  }
+  for (const extension of m.extensions ?? []) {
+    if (Array.isArray(extension.style_surfaces) && extension.style_surfaces.length > 0) {
+      declarations.push({ owner: extension.handle ?? 'extensions', surfaces: extension.style_surfaces });
+    }
+  }
+
+  if (declarations.length === 0) {
+    return messages;
+  }
+
+  if (prefix === '') {
+    return ['an app that declares style surfaces must also declare app-level `style_var_prefix` (e.g. style_var_prefix = "--tours")'];
+  }
+
+  if (prefix.startsWith('--fm-')) {
+    return ['style_var_prefix may not claim the platform --fm- namespace'];
+  }
+
+  for (const { owner, surfaces } of declarations) {
+    for (const surface of surfaces) {
+      for (const slot of surface.slots ?? []) {
+        if (slot.var !== prefix && !slot.var.startsWith(`${prefix}-`)) {
+          messages.push(
+            `${owner}.${surface.key}.${slot.key}: style variable "${slot.var}" is outside this app's namespace "${prefix}" — an app may only declare variables under its own style_var_prefix`,
+          );
+        }
+      }
+    }
+  }
+
+  return messages;
+}
 
 export const ManifestSchema = ManifestInput.superRefine((m, ctx): void => {
   if (!m.slug && !m.id) {
@@ -441,6 +594,10 @@ export const ManifestSchema = ManifestInput.superRefine((m, ctx): void => {
 
   for (const message of validateSchedules(m.schedules ?? [])) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: ['schedules'] });
+  }
+
+  for (const message of validateStyleSurfaces(m)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: ['style_surfaces'] });
   }
 }).transform((m): AppManifest => {
   const slug = m.slug ?? deriveSlugFromId(m.id)!;
