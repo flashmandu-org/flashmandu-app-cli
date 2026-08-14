@@ -40,6 +40,7 @@ import { makeHooksCommand } from './commands/hooks';
 import { makeLogsCommand } from './commands/logs';
 import { makePsCommand, makeStopCommand } from './commands/ps';
 import { makeCompletionCommand } from './commands/completion';
+import { makeKitCommand } from './commands/kit';
 
 const program = new Command();
 
@@ -54,6 +55,7 @@ program
       '  login    authenticate to an AutoHisab Business host\n' +
       '  logs     recent webhook deliveries (or platform pod logs with --platform)\n' +
       '  ps       list running dev app processes\n' +
+      '  kit      status/sync the vendored bridge SDK (app-bridge, app-bridge-ui)\n' +
       "Run `autohisab-business <command> --help` for each command's options.",
   )
   .option(
@@ -80,6 +82,7 @@ program.addCommand(makeHooksCommand());
 program.addCommand(makeLogsCommand());
 program.addCommand(makePsCommand());
 program.addCommand(makeStopCommand());
+program.addCommand(makeKitCommand());
 program.addCommand(makeCompletionCommand(program));
 
 program.exitOverride();
