@@ -92,15 +92,42 @@ async function writeSandboxSecrets(file: string, secrets: SandboxSecrets): Promi
   }
 }
 
-async function openBrowser(url: string): Promise<void> {
-  const cmd =
-    process.platform === 'darwin'
-      ? 'open'
-      : process.platform === 'win32'
-        ? 'start ""'
-        : 'xdg-open';
+/**
+ * Open a URL in the user's default browser. Best-effort on every platform: a
+ * failure here must never take the dev loop down.
+ *
+ * Windows needs `cmd.exe /c start`, not a bare `start` — `start` is a cmd
+ * builtin, not an executable, so spawning it directly fails with ENOENT. The
+ * empty `""` is the window TITLE argument: without it `start` treats the URL's
+ * quotes as the title and opens nothing. Arguments go through verbatim so cmd
+ * receives the URL exactly as quoted here — a query string's `&` would
+ * otherwise be read as a command separator.
+ */
+export function browserOpenCommand(
+  url: string,
+  platform: NodeJS.Platform = process.platform,
+): { cmd: string; args: string[]; verbatim: boolean } {
+  if (platform === 'darwin') return { cmd: 'open', args: [url], verbatim: false };
+  if (platform === 'win32') {
+    return { cmd: 'cmd.exe', args: ['/c', 'start', '""', `"${url}"`], verbatim: true };
+  }
+  return { cmd: 'xdg-open', args: [url], verbatim: false };
+}
+
+function openBrowser(url: string): void {
+  const { cmd, args, verbatim } = browserOpenCommand(url);
   try {
-    spawn(cmd, [url], { detached: true, stdio: 'ignore' }).unref();
+    const child = spawn(cmd, args, {
+      detached: true,
+      stdio: 'ignore',
+      windowsVerbatimArguments: verbatim,
+    });
+    // spawn() reports ENOENT asynchronously via an 'error' event, which is
+    // fatal when unhandled — the try/catch above never sees it.
+    child.on('error', () => {
+      /* no browser available — non-fatal */
+    });
+    child.unref();
   } catch {
     /* non-fatal */
   }
@@ -146,21 +173,34 @@ async function detectAppType(appDir: string): Promise<AppType | null> {
   return null;
 }
 
+/**
+ * Spawn a command line cross-platform.
+ *
+ * On Windows the whole string is handed to the shell as one piece: `npm` and
+ * friends are `.cmd` shims that cmd.exe must resolve, and passing an args
+ * ARRAY alongside `shell: true` triggers DEP0190 (Node concatenates the args
+ * unescaped) while mangling any path containing a space. Elsewhere the command
+ * is split and executed directly, with no shell in the loop at all.
+ */
+function spawnCommand(command: string, opts: SpawnOptions): ChildProcess | null {
+  if (process.platform === 'win32') {
+    return spawn(command, { ...opts, shell: true });
+  }
+  const parts = command.split(/\s+/).filter(Boolean);
+  const cmd = parts[0];
+  if (!cmd) return null;
+  return spawn(cmd, parts.slice(1), { ...opts, shell: false });
+}
+
 /** Run a shell command synchronously (for `npm install`), inheriting stdio. */
 function runSync(command: string, cwd: string): Promise<number> {
   return new Promise((resolve) => {
-    const parts = command.split(/\s+/).filter(Boolean);
-    const cmd = parts[0];
-    if (!cmd) {
+    const child = spawnCommand(command, { cwd, stdio: 'inherit' });
+    if (!child) {
       resolve(1);
       return;
     }
-    const opts: SpawnOptions = {
-      cwd,
-      stdio: 'inherit',
-      shell: process.platform === 'win32',
-    };
-    const child = spawn(cmd, parts.slice(1), opts);
+    child.on('error', () => resolve(1));
     child.on('exit', (code) => resolve(code ?? 0));
   });
 }
@@ -183,8 +223,9 @@ async function resolveAutoCommand(
     );
   }
   if (type === 'node') {
-    // node dev servers (incl. the shipped `next dev -p ${PORT:-3000}` template)
-    // read PORT, so setting it pins them to --port.
+    // node dev servers (incl. the shipped `next dev` template) read PORT, so
+    // setting it pins them to --port. Scripts must never inline a shell
+    // default like `-p ${PORT:-3000}` — cmd.exe/PowerShell do not expand it.
     return { command: 'npm run dev', env: { PORT: String(port) }, type };
   }
   // php — serve the web root (public/ if present, else the app dir).
@@ -202,7 +243,7 @@ export function makeDevCommand(): Command {
     )
     .option('--no-app-server', "Don't start the app server (you've started it separately)")
     .option('-d, --dir <path>', 'App directory (default: cwd)', '.')
-    .option('--tunnel <provider>', 'Tunnel provider: cloudflared | ngrok')
+    .option('--tunnel [provider]', 'Tunnel provider: cloudflared | ngrok (default: cloudflared)')
     .option('--tunnel-url <url>', 'Use a pre-existing public https URL (no spawn)')
     .option('--no-open', 'Do not open the sandbox browser automatically')
     .option(
@@ -216,7 +257,7 @@ export function makeDevCommand(): Command {
         appCommand?: string;
         appServer: boolean;
         dir: string;
-        tunnel?: TunnelProvider;
+        tunnel?: TunnelProvider | boolean;
         tunnelUrl?: string;
         open: boolean;
         sandboxPath: string;
@@ -298,19 +339,21 @@ export function makeDevCommand(): Command {
 
           const label = resolved.type ? `${resolved.type} app` : 'app';
           spinner.start(`Starting ${label} server: ${resolved.command}`);
-          const parts = resolved.command.split(/\s+/).filter(Boolean);
-          const cmd = parts[0];
-          if (!cmd) {
-            spinner.fail();
-            throw new Error('Resolved app command is empty.');
-          }
           const spawnOpts: SpawnOptions = {
             cwd: appDir,
             stdio: 'inherit',
             env: { ...process.env, ...resolved.env },
-            shell: process.platform === 'win32',
           };
-          appServer = spawn(cmd, parts.slice(1), spawnOpts);
+          const started = spawnCommand(resolved.command, spawnOpts);
+          if (!started) {
+            spinner.fail();
+            throw new Error('Resolved app command is empty.');
+          }
+          appServer = started;
+          appServer.on('error', (err) => {
+            appServerDied = true;
+            console.log(chalk.yellow(`App server failed to start: ${err.message}`));
+          });
           appServer.on('exit', (code) => {
             // Non-zero exit means the server never came up (or crashed). The
             // tunnel must not be opened against a dead server.
@@ -349,7 +392,9 @@ export function makeDevCommand(): Command {
         try {
           tunnel = await startTunnel({
             port,
-            provider: opts.tunnel as TunnelProvider | undefined,
+            // `--tunnel` with no value arrives as `true` — that means "yes,
+            // tunnel" with no provider preference, i.e. the default.
+            provider: typeof opts.tunnel === 'string' ? opts.tunnel : undefined,
             externalUrl: opts.tunnelUrl,
           });
         } catch (err) {

@@ -5,9 +5,9 @@
   "description": "AutoHisab Business app starter (Next.js + TypeScript) with OAuth + HMAC webhooks, host page chrome and IndexTable.",
   "type": "module",
   "scripts": {
-    "dev": "next dev -p ${PORT:-3000}",
+    "dev": "next dev",
     "build": "next build",
-    "start": "next start -p ${PORT:-3000}"
+    "start": "next start"
   },
   "dependencies": {
     "@flashmandu/app-bridge": "file:vendor/flashmandu-app-bridge-0.5.0.tgz",

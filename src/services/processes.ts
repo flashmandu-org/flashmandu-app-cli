@@ -35,10 +35,37 @@ export interface TunnelProcess {
   command: string;
 }
 
+/**
+ * Windows has no `ps`. Enumerate via CIM instead and emit the same
+ * `pid ppid command` shape the POSIX branch parses. Processes the current user
+ * cannot inspect come back with an empty CommandLine — those rows simply never
+ * match the dev-loop/tunnel filters.
+ */
+function snapshotWindows(): string {
+  const script =
+    'Get-CimInstance Win32_Process | ForEach-Object { ' +
+    '"$($_.ProcessId) $($_.ParentProcessId) $($_.CommandLine)" }';
+  // -EncodedCommand takes base64 UTF-16LE, which sidesteps the cmd.exe →
+  // PowerShell quoting minefield entirely: the script contains quotes, `$(...)`
+  // and a pipe, none of which survive naive interpolation intact.
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  return execSync(`powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`, {
+    encoding: 'utf8',
+    maxBuffer: 20 * 1024 * 1024,
+    windowsHide: true,
+  });
+}
+
 /** Return all processes as [{pid, ppid, command}]. */
 function snapshot(): Array<{ pid: number; ppid: number; command: string }> {
   try {
-    const out = execSync('ps -eo pid=,ppid=,command=', { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
+    const out =
+      process.platform === 'win32'
+        ? snapshotWindows()
+        : execSync('ps -eo pid=,ppid=,command=', {
+            encoding: 'utf8',
+            maxBuffer: 20 * 1024 * 1024,
+          });
     return out
       .split('\n')
       .map((line) => line.trim())
@@ -54,6 +81,15 @@ function snapshot(): Array<{ pid: number; ppid: number; command: string }> {
   }
 }
 
+/**
+ * The cloudflared binary as it appears in a command line. Windows uses `\\`
+ * as the path separator and appends `.exe`, so a literal 'cloudflared/bin/
+ * cloudflared' substring check finds nothing there. Matching the binary path —
+ * rather than the bare word — keeps a dev loop's own `--tunnel cloudflared`
+ * argument from being mistaken for the tunnel process.
+ */
+const CLOUDFLARED_BIN_RE = /cloudflared[/\\]bin[/\\]cloudflared(\.exe)?/i;
+
 /** Extract --port <n> from a command line (default 3000 when absent). */
 function parsePort(cmd: string): number | null {
   const m = cmd.match(/--port\s+(\d+)/);
@@ -67,6 +103,7 @@ function parseOpt(cmd: string, opt: string): string | null {
 
 /** Resolve a process's cwd via lsof (macOS/Linux). null when unavailable. */
 function cwdOf(pid: number): string | null {
+  if (process.platform === 'win32') return null; // no lsof; cwd is optional everywhere it is used
   try {
     const out = execSync(`lsof -a -p ${pid} -d cwd -Fn 2>/dev/null`, {
       encoding: 'utf8',
@@ -98,13 +135,10 @@ export function listTunnelProcesses(): TunnelProcess[] {
   return snapshot()
     .filter(
       // Match the actual binaries, not a dev loop's `--tunnel cloudflared` arg.
-      (p) =>
-        p.command.includes('cloudflared/bin/cloudflared') || /\bngrok\b/.test(p.command),
+      (p) => CLOUDFLARED_BIN_RE.test(p.command) || /\bngrok\b/.test(p.command),
     )
     .map((p) => {
-      const kind = p.command.includes('cloudflared/bin/cloudflared')
-        ? 'cloudflared'
-        : 'ngrok';
+      const kind = CLOUDFLARED_BIN_RE.test(p.command) ? 'cloudflared' : 'ngrok';
       const urlMatch = p.command.match(/(?:--url\s+|ngrok\s+(?:http|tcp)\s+)http:\/\/localhost:(\d+)/);
       const portMatch = p.command.match(/:(\d{2,5})/);
       return {

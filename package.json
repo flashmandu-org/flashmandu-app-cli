@@ -1,6 +1,6 @@
 {
   "name": "@flashmandu/autohisab-business-cli",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Developer CLI for AutoHisab Business storefront apps. Build, test and publish apps; Shopify-CLI-equivalent dev tool.",
   "license": "proprietary",
   "author": "Flashmandu <engineering@flashmandu.com>",
