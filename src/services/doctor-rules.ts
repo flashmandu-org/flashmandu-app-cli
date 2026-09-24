@@ -680,7 +680,7 @@ const typographyScale: DoctorRule = {
 // ---------------------------------------------------------------------------
 const PAGE_IMPORT_RE = /import\s*\{([^}]*)\}\s*from\s*['"]@flashmandu\/app-bridge-ui\/react['"]/g;
 
-/** True if `file` has a real (non-comment) named import of `Page` from bridge-ui/react. */
+/** True if `file` has a real (non-comment) named import of `Page` or `FormPage` from bridge-ui/react. */
 function importsPageComponent(cwd: string, file: string): boolean {
   const content = codeContent(cwd, file);
   PAGE_IMPORT_RE.lastIndex = 0;
@@ -690,7 +690,7 @@ function importsPageComponent(cwd: string, file: string): boolean {
       .split(',')
       .map((n) => n.trim().split(/\s+as\s+/)[0]?.trim())
       .filter(Boolean);
-    if (names.includes('Page')) return true;
+    if (names.includes('Page') || names.includes('FormPage')) return true;
   }
   return false;
 }
@@ -851,6 +851,93 @@ const sectionBlueprintValid: DoctorRule = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// 17. Incident (PG-329, 2026-09-24): form pages in shipped apps (tours "new
+//     tour", interactive-map's map form) rendered their fields with no FORM
+//     actions in the host command bar — Save lived in a footer the host never
+//     saw, or nowhere, so the command bar showed ⌘K over a dirty form and the
+//     host could not guard navigation. The owner's rule: a page with form
+//     fields shows its Save/Cancel in the command bar. The kit's <FormPage>
+//     (app-bridge-ui 0.6.0) publishes them from `dirty` + `onSubmit`; this rule
+//     fails an app/**/page.tsx that renders form controls but neither uses
+//     <FormPage> nor passes non-empty `actions` to <Page>. It looks at the
+//     page file only — a form in a child component that renders its own
+//     <FormPage> keeps the page file clean, which is the shape we want.
+// ---------------------------------------------------------------------------
+const FORM_CONTROL_RE = /<(Input|Field|Textarea|Select|input|textarea|select|form)(?=[\s/>])([^>]*)/g;
+const NON_FORM_INPUT_TYPE_RE = /\btype\s*=\s*\{?\s*["'`](search|hidden)["'`]/;
+
+/** Offset of the first real form control in `content`, or -1. A search box or a hidden input is not a form. */
+function firstFormControl(content: string): number {
+  FORM_CONTROL_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = FORM_CONTROL_RE.exec(content)) !== null) {
+    const attrs = match[2] ?? '';
+    const tag = match[1] as string;
+    if ((tag === 'Input' || tag === 'input') && NON_FORM_INPUT_TYPE_RE.test(attrs)) continue;
+    return match.index;
+  }
+  return -1;
+}
+
+/** The attribute text of every `<Page …>` opening tag, brace-aware (JSX expressions may contain `>`). */
+function pageOpeningTags(content: string): string[] {
+  const tags: string[] = [];
+  const re = /<Page(?=[\s/>])/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(content)) !== null) {
+    let depth = 0;
+    let i = match.index + match[0].length;
+    for (; i < content.length; i += 1) {
+      const ch = content[i];
+      if (ch === '{') depth += 1;
+      else if (ch === '}') depth -= 1;
+      else if (ch === '>' && depth === 0) break;
+    }
+    tags.push(content.slice(match.index, i));
+  }
+  return tags;
+}
+
+/** `actions={…}` present and not the literal empty array. */
+function hasNonEmptyActions(openingTag: string): boolean {
+  const m = /\bactions\s*=\s*\{([\s\S]*)/.exec(openingTag);
+  if (!m) return false;
+  return !/^\s*\[\s*\]\s*\}/.test(m[1] as string);
+}
+
+const formActionsInCommandBar: DoctorRule = {
+  name: 'form-actions-in-command-bar',
+  check(cwd) {
+    const pages = [
+      ...walk(cwd, 'app', (rel) => /(^|[\\/])page\.(tsx|jsx)$/.test(rel)),
+      ...walk(cwd, path.join('src', 'app'), (rel) => /(^|[\\/])page\.(tsx|jsx)$/.test(rel)),
+    ];
+    const findings: Finding[] = [];
+
+    for (const file of pages) {
+      const content = codeContent(cwd, file);
+      const at = firstFormControl(content);
+      if (at < 0) continue;
+      if (/<FormPage(?=[\s/>])/.test(content)) continue;
+      if (pageOpeningTags(content).some(hasNonEmptyActions)) continue;
+
+      findings.push(
+        fail(
+          'form-actions-in-command-bar',
+          'Page renders form fields but publishes no form actions to the host command bar. ' +
+            'Fix: render it as <FormPage title crumbs dirty onSubmit onCancel> from @flashmandu/app-bridge-ui/react (0.6.0+) — ' +
+            'it publishes Save (primary) + Cancel to the command bar, disables Save while pristine, submits on Enter and hides ⌘K while dirty. ' +
+            'Never draw your own Save button in the page.',
+          { file, line: content.slice(0, at).split('\n').length },
+        ),
+      );
+    }
+
+    return findings.length > 0 ? findings : [pass('form-actions-in-command-bar')];
+  },
+};
+
 export const DOCTOR_RULES: DoctorRule[] = [
   noFmOverride,
   frameHeaders,
@@ -868,4 +955,5 @@ export const DOCTOR_RULES: DoctorRule[] = [
   typographyScale,
   pageChromeWired,
   sectionBlueprintValid,
+  formActionsInCommandBar,
 ];

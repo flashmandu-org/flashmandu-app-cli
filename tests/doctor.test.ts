@@ -715,3 +715,70 @@ describe('section-blueprint-valid', () => {
     expect(rule('section-blueprint-valid').check(dir).every((f) => f.ok)).toBe(true);
   });
 });
+
+describe('form-actions-in-command-bar', () => {
+  const run = (dir: string) => rule('form-actions-in-command-bar').check(dir);
+  const failures = (dir: string) => run(dir).filter((f) => !f.ok);
+
+  it('is registered in DOCTOR_RULES', () => {
+    expect(DOCTOR_RULES.map((r) => r.name)).toContain('form-actions-in-command-bar');
+  });
+
+  it('passes a form page rendered as <FormPage>', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'app/(admin)/tours/new/page.tsx',
+      "import { FormPage, Field, Input } from '@flashmandu/app-bridge-ui/react';\nexport default function New() {\n  return (\n    <FormPage title=\"New tour\" dirty={dirty} onSubmit={save}>\n      <Field label=\"Name\"><Input /></Field>\n    </FormPage>\n  );\n}\n",
+    );
+    expect(run(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('passes a <Page> with fields that publishes non-empty actions', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'app/settings/page.tsx',
+      "export default function S() {\n  return (\n    <Page title=\"Settings\" dirty={dirty} actions={[{ id: 'save', label: 'Save', variant: 'primary', disabled: !dirty && x > 1 }]}>\n      <Input value={v} />\n    </Page>\n  );\n}\n",
+    );
+    expect(run(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('passes pages with no form controls, a search box only, or a hidden input only', async () => {
+    const dir = await tempDir();
+    await write(dir, 'app/page.tsx', 'export default function H() { return <Page title="Home"><Card /></Page>; }');
+    await write(dir, 'app/items/page.tsx', 'export default function I() { return <Page title="Items"><Input type="search" aria-label="Search" /></Page>; }');
+    await write(dir, 'app/x/page.tsx', 'export default function X() { return <Page title="X"><input type="hidden" name="id" /></Page>; }');
+    expect(run(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('fails a page with fields and a footer Save but no command-bar actions, with file, line and fix hint', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'app/maps/[id]/edit/page.tsx',
+      "export default function Edit() {\n  return (\n    <Page title=\"Edit map\" dirty={dirty}>\n      <Field label=\"Name\">\n        <Input value={name} />\n      </Field>\n      <Button onClick={save}>Save</Button>\n    </Page>\n  );\n}\n",
+    );
+    const found = failures(dir);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ file: path.join('app', 'maps', '[id]', 'edit', 'page.tsx'), line: 4, severity: 'error' });
+    expect(found[0]!.detail).toMatch(/<FormPage/);
+  });
+
+  it('fails when <Page actions={[]}> is empty, and for a raw <form> under src/app', async () => {
+    const dir = await tempDir();
+    await write(dir, 'app/a/page.tsx', 'export default function A() { return <Page title="A" actions={[]}><Textarea /></Page>; }');
+    await write(dir, 'src/app/b/page.tsx', 'export default function B() { return <main><form onSubmit={go}><input name="q" /></form></main>; }');
+    expect(failures(dir).map((f) => f.file).sort()).toEqual([
+      path.join('app', 'a', 'page.tsx'),
+      path.join('src', 'app', 'b', 'page.tsx'),
+    ]);
+  });
+
+  it('ignores form controls mentioned only in comments, and non-page files', async () => {
+    const dir = await tempDir();
+    await write(dir, 'app/page.tsx', '// renders <Input /> later\nexport default function H() { return <Page title="H" />; }');
+    await write(dir, 'app/_components/MapForm.tsx', 'export function MapForm() { return <form><Input /></form>; }');
+    expect(run(dir).every((f) => f.ok)).toBe(true);
+  });
+});

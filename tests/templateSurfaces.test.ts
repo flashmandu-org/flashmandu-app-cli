@@ -65,3 +65,14 @@ describe('the scaffolded list surface', () => {
         expect(code).not.toMatch(/margin\s*:\s*['"`]?\d/);
     });
 });
+
+describe('the scaffolded form surface (PG-329a)', () => {
+    it('renders the settings form as <FormPage>, never a hand-published Save', async () => {
+        const settings = path.join(__dirname, '..', 'src', 'templates', 'next-js', 'app', '(admin)', 'settings', 'page.tsx');
+        const code = codeOnly(await fs.readFile(settings, 'utf8'));
+
+        expect(code).toMatch(/<FormPage[\s\S]*dirty=\{dirty\}[\s\S]*onSubmit=\{save\}/);
+        expect(code).not.toMatch(/<Page[\s>]/);
+        expect(code).not.toMatch(/id:\s*'save'/);
+    });
+});
