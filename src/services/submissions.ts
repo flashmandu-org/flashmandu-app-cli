@@ -6,6 +6,13 @@ import type { AppManifest } from './manifest';
 export interface SubmitResult {
   id: number | string;
   app_id?: string;
+  /**
+   * PG-333: server-derived warnings that do not block the submission —
+   * currently an unknown `nav_items[].icon` / `embed_blocks[].icon` (falls
+   * back to a real icon on install rather than leaving a blank row, but the
+   * developer should fix the manifest rather than rely on the fallback).
+   */
+  warnings?: string[];
 }
 
 export interface SubmitOptions {

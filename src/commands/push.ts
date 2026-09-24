@@ -85,6 +85,13 @@ export function makePushCommand(): Command {
             description: opts.description,
           });
           spinner.succeed(chalk.green(`Submitted (id #${res.id}).`));
+          // PG-333: the server validates nav_items/embed_blocks icons against
+          // its Flux vocabulary and falls back to a real icon rather than
+          // rejecting the push — surface the warning so the developer fixes
+          // the manifest instead of shipping the fallback unknowingly.
+          for (const warning of res.warnings ?? []) {
+            console.log(chalk.yellow(`  Warning: ${warning}`));
+          }
           // Persist only AFTER the submission is accepted, so a failed push
           // does not burn a version number or record an unused identity. The
           // non-null assertions are sound: `submitAppForReview` resolves these

@@ -4,6 +4,7 @@ import * as TOML from '@iarna/toml';
 
 import { kitStatus } from './kit';
 import { stripComments, stripCommentsLines } from './commentStrip';
+import { DEFAULT_ICON, isKnownIcon } from './icon-vocabulary';
 import {
   MANIFEST_FILENAME,
   ManifestSchema,
@@ -938,6 +939,74 @@ const formActionsInCommandBar: DoctorRule = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// 18. Incident (PG-333, 2026-09-24, owner screenshot): the host stores any
+//     `icon` string on nav_items/embed_blocks and only trims its length — an
+//     unknown name (Tours' `panorama`) renders NOTHING, so the nav child was
+//     icon-less and its row misaligned. The host now falls back to a real
+//     icon at install time, but a developer should see the typo BEFORE
+//     shipping it, not rely on the runtime fallback. Checks `[[nav_items]]`
+//     and `[[embed_blocks]]` icons in flashmandu.app.toml against the same
+//     vocabulary `push` warns from server-side (assets/icon-vocabulary.json,
+//     generated from the host's installed Flux icon set — see
+//     scripts/generate-icon-vocabulary.mjs).
+// ---------------------------------------------------------------------------
+const manifestIcons: DoctorRule = {
+  name: 'manifest-icons',
+  check(cwd) {
+    const manifestPath = path.join(cwd, MANIFEST_FILENAME);
+    if (!existsSync(manifestPath)) {
+      return [pass('manifest-icons')];
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = TOML.parse(readFileSync(manifestPath, 'utf8'));
+    } catch {
+      // Malformed TOML is `readManifest`'s concern, not this rule's.
+      return [pass('manifest-icons')];
+    }
+
+    const findings: Finding[] = [];
+    const manifest = parsed as {
+      nav_items?: Array<{ label?: string; icon?: string }>;
+      embed_blocks?: Array<{ name?: string; icon?: string }>;
+    };
+
+    for (const item of manifest.nav_items ?? []) {
+      const icon = item.icon;
+      if (typeof icon !== 'string' || icon.trim() === '') continue;
+      if (isKnownIcon(icon)) continue;
+      findings.push(
+        fail(
+          'manifest-icons',
+          `nav_items${item.label ? ` "${item.label}"` : ''} declares unknown icon "${icon}" — ` +
+            `the sidebar renders it blank. Use a Flux icon name (e.g. "${DEFAULT_ICON}"); ` +
+            'see https://fluxui.dev/components/icon for the full set.',
+          { file: MANIFEST_FILENAME },
+        ),
+      );
+    }
+
+    for (const block of manifest.embed_blocks ?? []) {
+      const icon = block.icon;
+      if (typeof icon !== 'string' || icon.trim() === '') continue;
+      if (isKnownIcon(icon)) continue;
+      findings.push(
+        fail(
+          'manifest-icons',
+          `embed_blocks${block.name ? ` "${block.name}"` : ''} declares unknown icon "${icon}" — ` +
+            `the storefront block picker renders it blank. Use a Flux icon name (e.g. "${DEFAULT_ICON}"); ` +
+            'see https://fluxui.dev/components/icon for the full set.',
+          { file: MANIFEST_FILENAME },
+        ),
+      );
+    }
+
+    return findings.length > 0 ? findings : [pass('manifest-icons')];
+  },
+};
+
 export const DOCTOR_RULES: DoctorRule[] = [
   noFmOverride,
   frameHeaders,
@@ -956,4 +1025,5 @@ export const DOCTOR_RULES: DoctorRule[] = [
   pageChromeWired,
   sectionBlueprintValid,
   formActionsInCommandBar,
+  manifestIcons,
 ];

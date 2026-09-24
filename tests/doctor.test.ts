@@ -782,3 +782,70 @@ describe('form-actions-in-command-bar', () => {
     expect(run(dir).every((f) => f.ok)).toBe(true);
   });
 });
+
+describe('manifest-icons', () => {
+  it('passes when the manifest has no nav_items or embed_blocks', async () => {
+    const dir = await tempDir();
+    await write(dir, 'flashmandu.app.toml', 'slug = "acme"\nname = "Acme"\n');
+    expect(rule('manifest-icons').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('passes when nav_items and embed_blocks use known Flux icon names', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'flashmandu.app.toml',
+      [
+        '[[nav_items]]',
+        'label = "Home"',
+        'path = "/"',
+        'icon = "home"',
+        '',
+        '[[embed_blocks]]',
+        'name = "Gallery"',
+        'icon = "photo"',
+        'block_path = "/gallery"',
+      ].join('\n'),
+    );
+    expect(rule('manifest-icons').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('fails on an unknown nav_items icon, naming the label and a fix hint', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'flashmandu.app.toml',
+      ['[[nav_items]]', 'label = "Tours"', 'path = "/tours"', 'icon = "panorama"'].join('\n'),
+    );
+    const findings = rule('manifest-icons').check(dir).filter((f) => !f.ok);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ severity: 'error', file: 'flashmandu.app.toml' });
+    expect(findings[0]!.detail).toContain('panorama');
+    expect(findings[0]!.detail).toContain('Tours');
+  });
+
+  it('fails on an unknown embed_blocks icon, naming the block', async () => {
+    const dir = await tempDir();
+    await write(
+      dir,
+      'flashmandu.app.toml',
+      ['[[embed_blocks]]', 'name = "Virtual Tour"', 'icon = "panorama"', 'block_path = "/tour"'].join('\n'),
+    );
+    const findings = rule('manifest-icons').check(dir).filter((f) => !f.ok);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.detail).toContain('panorama');
+    expect(findings[0]!.detail).toContain('Virtual Tour');
+  });
+
+  it('passes on malformed TOML (readManifest\'s concern, not this rule\'s)', async () => {
+    const dir = await tempDir();
+    await write(dir, 'flashmandu.app.toml', '[[nav_items\nicon = "panorama"');
+    expect(rule('manifest-icons').check(dir).every((f) => f.ok)).toBe(true);
+  });
+
+  it('ignores a nav item with no icon field at all', async () => {
+    const dir = await tempDir();
+    await write(dir, 'flashmandu.app.toml', ['[[nav_items]]', 'label = "Home"', 'path = "/"'].join('\n'));
+    expect(rule('manifest-icons').check(dir).every((f) => f.ok)).toBe(true);
+  });
+});
