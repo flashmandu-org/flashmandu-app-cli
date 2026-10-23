@@ -10,16 +10,21 @@
 # schema before it serves traffic. Both steps are conditional: an app without
 # a prisma/ directory or a db:seed script boots straight into `next start`.
 
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
+# The @flashmandu/app-bridge{,-ui} packages are not on the public registry yet, so
+# the lockfile pins them as `file:vendor/*.tgz`. Without the tarballs in this stage
+# `npm ci` fails with ENOENT on the vendor path. The glob is a no-op for an app
+# that vendors nothing.
+COPY vendor*/ ./vendor/
 RUN if [ -f package-lock.json ]; then \
       npm ci --no-audit --no-fund; \
     else \
       npm install --no-audit --no-fund; \
     fi
 
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 # Prisma's query engine is a native binary that on musl/alpine needs openssl +
 # libc6-compat to load; without them generate warns and the runtime engine fails.
@@ -48,7 +53,7 @@ ENV FLASHMANDU_DEV_BOX_BASE_URL="https://build.example"
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
