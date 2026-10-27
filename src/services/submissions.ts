@@ -2,6 +2,7 @@ import { post } from './apiClient';
 import { isPlaceholderUrl } from './verify';
 import { buildAppConfigSync } from './appSync';
 import type { AppManifest } from './manifest';
+import type { McpSurfacePayload } from './mcpSurface';
 
 export interface SubmitResult {
   id: number | string;
@@ -22,6 +23,8 @@ export interface SubmitOptions {
   developerEmail?: string;
   sourceUrl?: string;
   description?: string;
+  /** The resolved `[mcp]` surface (services/mcpSurface.resolveMcpSurface); omitted when undefined. */
+  mcp?: McpSurfacePayload;
 }
 
 export async function submitAppForReview(
@@ -79,6 +82,7 @@ export async function submitAppForReview(
       // platform knows to deploy to k3s (not treat it as a self-hosted remote).
       hosting_target: manifest.hosting_target,
       image_digest: manifest.image_digest,
+      ...(opts.mcp !== undefined ? { mcp: opts.mcp } : {}),
     },
   );
 }

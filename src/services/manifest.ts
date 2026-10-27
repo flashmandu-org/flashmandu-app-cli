@@ -134,6 +134,12 @@ export type AppManifest = {
    * itself — {@see SectionDefinition::fromArray} only reads `element_tree`.
    */
   storefront_sections?: StorefrontSection[];
+  /**
+   * App MCP tool surface — `[mcp] tools_file = "mcp-tools.json"` or inline
+   * `[[mcp.tools]]`. Resolved + validated by `services/mcpSurface.ts` and sent
+   * as `mcp` on dev-register and submission.
+   */
+  mcp?: { tools_file?: string; tools?: unknown[] };
 };
 
 /**
@@ -599,6 +605,14 @@ const ManifestInput = z.object({
   // than a generic "array too long".
   schedules: z.array(ScheduleSchema).optional(),
   storefront_sections: z.array(StorefrontSectionSchema).optional(),
+  // Shape-checked in services/mcpSurface.ts (SDK rules), not here, so the
+  // developer gets the platform's own wording.
+  mcp: z
+    .object({
+      tools_file: z.string().min(1).optional(),
+      tools: z.array(z.record(z.unknown())).optional(),
+    })
+    .optional(),
 });
 
 /**

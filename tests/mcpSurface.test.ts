@@ -111,9 +111,9 @@ describe('manifest + submission wiring', () => {
       slug: 'tours',
       name: 'Tours',
       version: '1.0.0',
-      authorize_url: 'https://t.example/oauth/authorize',
-      token_url: 'https://t.example/oauth/token',
-      webhook_url: 'https://t.example/webhooks/flashmandu',
+      authorize_url: 'https://tours.acme.com/oauth/authorize',
+      token_url: 'https://tours.acme.com/oauth/token',
+      webhook_url: 'https://tours.acme.com/webhooks/flashmandu',
       mcp: { tools_file: 'mcp-tools.json' },
     });
     expect(parsed.success).toBe(true);
@@ -123,8 +123,8 @@ describe('manifest + submission wiring', () => {
   it('submitAppForReview sends `mcp` when given, and omits it otherwise', async () => {
     const manifest: any = {
       slug: 'tours', name: 'Tours', developer_name: 'A', developer_email: 'a@b.co',
-      authorize_url: 'https://t.example/oauth/authorize', token_url: 'https://t.example/oauth/token',
-      webhook_url: 'https://t.example/webhooks/flashmandu', scopes: [], subscribed_events: [],
+      authorize_url: 'https://tours.acme.com/oauth/authorize', token_url: 'https://tours.acme.com/oauth/token',
+      webhook_url: 'https://tours.acme.com/webhooks/flashmandu', scopes: [], subscribed_events: [],
     };
     (apiClient.post as any).mockResolvedValue({ id: 1 });
     const mcp = { tools: [tool()] };

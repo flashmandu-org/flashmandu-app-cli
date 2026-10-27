@@ -9,6 +9,7 @@ import { probeUrl } from '../services/verify';
 import { ensureDocker } from '../services/dockerRuntime';
 import { fetchCapabilities } from '../services/platformCapabilities';
 import { submitAppForReview } from '../services/submissions';
+import { resolveMcpSurface } from '../services/mcpSurface';
 import { printAppConfigSync } from '../services/appSync';
 import { publisherHandleFromEmail } from '../services/appIdentity';
 import {
@@ -47,6 +48,8 @@ export function makeDeployCommand(): Command {
     }, cmd: Command) => {
       const dir = path.resolve(opts.dir);
       const manifest = await readManifest(dir);
+      // Validated before the image build: a bad [mcp] declaration fails fast.
+      const mcp = await resolveMcpSurface(manifest, dir);
 
       // Declarative `[webhooks]` + `[[schedules]]` ride along with whatever
       // this deploy submits. A `[webhooks].url` declared in the toml outranks
@@ -190,7 +193,7 @@ export function makeDeployCommand(): Command {
         // helper's placeholder-URL check sees the just-persisted platform URLs
         // (the manifest read at the top still carries the originals, which for
         // a first deploy of a fresh template are APP-HOST placeholders).
-        await submitAppForReview({ ...manifest, ...urls, hosting_target: 'platform', image_digest: digest }, { version });
+        await submitAppForReview({ ...manifest, ...urls, hosting_target: 'platform', image_digest: digest }, { version, mcp });
 
         // Persist the version + digest only after the submission succeeds, so a
         // failed submit does not burn a version number (mirrors `push`).

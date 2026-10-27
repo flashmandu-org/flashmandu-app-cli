@@ -11,6 +11,7 @@ import { scaffoldApp } from './init';
 import { confirm } from '@inquirer/prompts';
 import { startTunnel, type Tunnel, type TunnelProvider } from '../services/tunnel';
 import { registerSandbox, type DevRegisterResponse } from '../services/devRegistrar';
+import { resolveMcpSurface } from '../services/mcpSurface';
 import { getActive } from '../services/credentials';
 import {
   buildAppConfigSync,
@@ -278,6 +279,8 @@ export function makeDevCommand(): Command {
           }
         }
         const manifest = await readManifest(appDir);
+        // The app's [mcp] tool surface, validated once and sent on every register.
+        const mcp = await resolveMcpSurface(manifest, appDir);
         // Advisory only — a stale bridge never blocks the dev loop.
         await warnOnBridgeVersionFloor(appDir);
         const port = Number.parseInt(opts.port, 10);
@@ -460,6 +463,7 @@ export function makeDevCommand(): Command {
             subscribed_events: sync.subscribed_events,
             extensions,
             nav_items: navItems,
+            ...(mcp !== undefined ? { mcp } : {}),
           });
         };
 

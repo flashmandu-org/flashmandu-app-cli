@@ -40,6 +40,8 @@ export interface DevRegisterRequest {
   extensions?: unknown[];
   /** App-declared sidebar nav items (Spec #2 §S6). */
   nav_items?: unknown[];
+  /** App MCP tool surface `{ tools: [...] }` (services/mcpSurface). */
+  mcp?: unknown;
   // NOTE: `[[schedules]]` deliberately has NO field here. This endpoint never
   // validated (and therefore never read) a `schedules` key, so sending one was
   // a silent no-op that made declarations look synced while

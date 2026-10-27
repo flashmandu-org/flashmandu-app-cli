@@ -4,6 +4,7 @@ import ora from 'ora';
 import path from 'node:path';
 import { bumpPatch, readManifest, updateManifestFields } from '../services/manifest';
 import { submitAppForReview } from '../services/submissions';
+import { resolveMcpSurface } from '../services/mcpSurface';
 import { printAppConfigSync, warnOnBridgeVersionFloor } from '../services/appSync';
 
 /**
@@ -47,6 +48,8 @@ export function makePushCommand(): Command {
         }
 
         const manifest = await readManifest(path.resolve(opts.dir));
+        // Validated before any prompt: a bad [mcp] declaration fails here, not as a 422.
+        const mcp = await resolveMcpSurface(manifest, path.resolve(opts.dir));
         await warnOnBridgeVersionFloor(path.resolve(opts.dir));
         printAppConfigSync(manifest, 'not-applied');
 
@@ -83,6 +86,7 @@ export function makePushCommand(): Command {
             developerEmail: opts.developerEmail,
             sourceUrl: opts.sourceUrl,
             description: opts.description,
+            mcp,
           });
           spinner.succeed(chalk.green(`Submitted (id #${res.id}).`));
           // PG-333: the server validates nav_items/embed_blocks icons against
