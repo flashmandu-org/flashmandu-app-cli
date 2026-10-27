@@ -18,6 +18,13 @@
  * `removePrefix(profilePrefix(id))`. Keys are strict relative paths
  * (`isSafeKey`); that charset rule is the local driver's traversal defence.
  *
+ * AWS SDK. `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` are loaded
+ * LAZILY, on the first S3 call only, through a specifier neither TypeScript
+ * nor the bundler resolves at build time. So an app that never configures S3
+ * (or an older app `upgrade` just added this file to) builds and runs with
+ * neither package installed; configuring S3 without them is a clear
+ * StorageError naming the packages, not a broken build.
+ *
  * Server-only. No browser-exposed env var: every value is resolved server-side.
  * Vendored byte-for-byte by apps built before the starter shipped it (Tours);
  * change it HERE and re-vendor, never fork a copy.
@@ -26,14 +33,6 @@
 import { createReadStream, promises as fs } from 'node:fs';
 import path from 'node:path';
 
-import {
-  DeleteObjectCommand,
-  DeleteObjectsCommand,
-  ListObjectsV2Command,
-  PutObjectCommand,
-  S3Client,
-} from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 /** Presigned PUT lifetime, seconds. */
 export const PRESIGN_TTL_SECONDS = 15 * 60;
@@ -233,22 +232,66 @@ function s3Env(): S3Env | null {
   };
 }
 
-// One client per distinct credential set (env can change between calls in tests).
-const clients = new Map<string, S3Client>();
+// Structural slice of the AWS SDK this driver uses (the real types are not
+// required at build time; see "AWS SDK" above).
+type S3CommandCtor = new (input: Record<string, unknown>) => unknown;
+interface S3ClientLike {
+  send(command: unknown): Promise<{
+    Contents?: Array<{ Key?: string }>;
+    IsTruncated?: boolean;
+    NextContinuationToken?: string;
+  }>;
+}
+interface S3Sdk {
+  S3Client: new (config: Record<string, unknown>) => S3ClientLike;
+  PutObjectCommand: S3CommandCtor;
+  DeleteObjectCommand: S3CommandCtor;
+  DeleteObjectsCommand: S3CommandCtor;
+  ListObjectsV2Command: S3CommandCtor;
+  getSignedUrl(client: S3ClientLike, command: unknown, options: { expiresIn: number }): Promise<string>;
+}
 
-function client(env: S3Env): S3Client {
+// Non-literal on purpose: a literal would make tsc and the bundler require
+// the packages at build time.
+const AWS_S3_CLIENT = '@aws-sdk/client-s3';
+const AWS_S3_PRESIGNER = '@aws-sdk/s3-request-presigner';
+
+let sdkPromise: Promise<S3Sdk> | null = null;
+
+function loadSdk(): Promise<S3Sdk> {
+  sdkPromise ??= Promise.all([
+    import(/* webpackIgnore: true */ AWS_S3_CLIENT),
+    import(/* webpackIgnore: true */ AWS_S3_PRESIGNER),
+  ]).then(
+    ([client, presigner]) => ({ ...client, getSignedUrl: presigner.getSignedUrl }) as S3Sdk,
+    () => {
+      sdkPromise = null;
+      throw new StorageError(
+        `S3 storage is configured but ${AWS_S3_CLIENT} and ${AWS_S3_PRESIGNER} are not installed. ` +
+          'Run: npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner',
+      );
+    },
+  );
+  return sdkPromise;
+}
+
+// One client per distinct credential set (env can change between calls in tests).
+const clients = new Map<string, S3ClientLike>();
+
+async function client(env: S3Env): Promise<{ sdk: S3Sdk; s3: S3ClientLike }> {
+  const sdk = await loadSdk();
   const id = `${env.endpoint}|${env.region}|${env.accessKeyId}`;
-  let c = clients.get(id);
-  if (!c) {
-    c = new S3Client({
+  let s3 = clients.get(id);
+  if (!s3) {
+    s3 = new sdk.S3Client({
       endpoint: env.endpoint,
       region: env.region,
       credentials: { accessKeyId: env.accessKeyId, secretAccessKey: env.secretAccessKey },
       forcePathStyle: true,
     });
-    clients.set(id, c);
+    clients.set(id, s3);
   }
-  return c;
+  return { sdk, s3 };
 }
 
 function assertKey(key: string): void {
@@ -263,30 +306,32 @@ function s3Storage(env: S3Env): AppStorage {
 
     async save(key, data) {
       assertKey(key);
-      await client(env).send(
-        new PutObjectCommand({ Bucket: env.bucket, Key: key, Body: data, ContentType: contentTypeForKey(key) }),
+      const { sdk, s3 } = await client(env);
+      await s3.send(
+        new sdk.PutObjectCommand({ Bucket: env.bucket, Key: key, Body: data, ContentType: contentTypeForKey(key) }),
       );
     },
 
     async remove(key) {
       assertKey(key);
-      await client(env).send(new DeleteObjectCommand({ Bucket: env.bucket, Key: key }));
+      const { sdk, s3 } = await client(env);
+      await s3.send(new sdk.DeleteObjectCommand({ Bucket: env.bucket, Key: key }));
     },
 
     async removePrefix(prefix) {
       if (!isSafeKey(prefix)) {
         return 0;
       }
-      const s3 = client(env);
+      const { sdk, s3 } = await client(env);
       let count = 0;
       let token: string | undefined;
       do {
         const listed = await s3.send(
-          new ListObjectsV2Command({ Bucket: env.bucket, Prefix: prefix, ContinuationToken: token }),
+          new sdk.ListObjectsV2Command({ Bucket: env.bucket, Prefix: prefix, ContinuationToken: token }),
         );
         const objects = (listed.Contents ?? []).flatMap((o) => (o.Key ? [{ Key: o.Key }] : []));
         if (objects.length > 0) {
-          await s3.send(new DeleteObjectsCommand({ Bucket: env.bucket, Delete: { Objects: objects } }));
+          await s3.send(new sdk.DeleteObjectsCommand({ Bucket: env.bucket, Delete: { Objects: objects } }));
           count += objects.length;
         }
         token = listed.IsTruncated ? listed.NextContinuationToken : undefined;
@@ -300,9 +345,10 @@ function s3Storage(env: S3Env): AppStorage {
 
     async presignPut(key, contentType) {
       assertKey(key);
-      const url = await getSignedUrl(
-        client(env),
-        new PutObjectCommand({ Bucket: env.bucket, Key: key, ContentType: contentType }),
+      const { sdk, s3 } = await client(env);
+      const url = await sdk.getSignedUrl(
+        s3,
+        new sdk.PutObjectCommand({ Bucket: env.bucket, Key: key, ContentType: contentType }),
         { expiresIn: PRESIGN_TTL_SECONDS },
       );
       return { url, key };
