@@ -90,3 +90,40 @@ describe('submitAppForReview', () => {
     );
   });
 });
+
+describe('submitAppForReview — Style Surface namespace (same flatten as dev)', () => {
+  const surfaced = {
+    type: 'virtual-tour', name: 'Virtual Tour', block_path: '/embed/virtual-tour',
+    style_surfaces: [{ key: 'pin_card', name: 'Info card', slots: [{ key: 'radius', var: '--tours-card-radius', type: 'length' }] }],
+  };
+  const plain = { type: 'plain', name: 'Plain', block_path: '/embed/plain' };
+
+  it('carries style_var_prefix + style_schema_version on every surfaced block and top-level', async () => {
+    (apiClient.post as any).mockResolvedValue({ id: 21 });
+    await submitAppForReview(
+      { ...manifest, style_var_prefix: '--tours', style_schema_version: 2, embed_blocks: [surfaced, plain] },
+      { version: '2.0.0' },
+    );
+    const body = (apiClient.post as any).mock.calls.at(-1)[1];
+    expect(body.style_var_prefix).toBe('--tours');
+    expect(body.style_schema_version).toBe(2);
+    expect(body.embed_blocks[0]).toMatchObject({ type: 'virtual-tour', style_var_prefix: '--tours', style_schema_version: 2 });
+    expect(body.embed_blocks[0].style_surfaces).toEqual(surfaced.style_surfaces);
+    // A block with no surfaces is sent untouched (no new keys).
+    expect(body.embed_blocks[1]).toEqual(plain);
+  });
+
+  it('defaults style_schema_version to 1, like dev, and sends nothing extra without surfaces', async () => {
+    (apiClient.post as any).mockResolvedValue({ id: 22 });
+    await submitAppForReview({ ...manifest, style_var_prefix: '--tours', embed_blocks: [surfaced] }, { version: '2.0.1' });
+    let body = (apiClient.post as any).mock.calls.at(-1)[1];
+    expect(body.embed_blocks[0].style_schema_version).toBe(1);
+    expect(body.style_schema_version).toBe(1);
+
+    await submitAppForReview({ ...manifest, embed_blocks: [plain] }, { version: '2.0.2' });
+    body = (apiClient.post as any).mock.calls.at(-1)[1];
+    expect('style_var_prefix' in body).toBe(false);
+    expect('style_schema_version' in body).toBe(false);
+    expect(body.embed_blocks).toEqual([plain]);
+  });
+});
