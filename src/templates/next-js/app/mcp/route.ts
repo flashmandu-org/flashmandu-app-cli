@@ -20,6 +20,7 @@ export const runtime = 'nodejs';
 
 export const { POST } = createMcpRoute({
   secret: () => loadConfig().webhookSecret,
-  declared: declared as McpDeclarationFile,
+  // JSON imports widen literal types; the CLI validates the shape at dev/push.
+  declared: declared as unknown as McpDeclarationFile,
   handlers: {},
 });
