@@ -1,6 +1,7 @@
 import { post } from './apiClient';
 import { isPlaceholderUrl } from './verify';
 import { buildAppConfigSync } from './appSync';
+import { flattenStyleNamespace } from './extensions';
 import type { AppManifest } from './manifest';
 import type { McpSurfacePayload } from './mcpSurface';
 
@@ -76,7 +77,13 @@ export async function submitAppForReview(
       scopes: manifest.scopes ?? [],
       subscribed_events: sync.subscribed_events,
       schedules: sync.schedules,
-      embed_blocks: manifest.embed_blocks ?? [],
+      // Same flatten `dev` applies (services/extensions): each surfaced block
+      // carries the app-level namespace, since the host reads it per block.
+      embed_blocks: (manifest.embed_blocks ?? []).map((block) => flattenStyleNamespace(block, manifest)),
+      // ...and top-level, for the submission record itself.
+      ...(manifest.style_var_prefix !== undefined
+        ? { style_var_prefix: manifest.style_var_prefix, style_schema_version: manifest.style_schema_version ?? 1 }
+        : {}),
       nav_items: manifest.nav_items ?? [],
       // Platform-hosted apps: carry the hosting decision + image digest so the
       // platform knows to deploy to k3s (not treat it as a self-hosted remote).

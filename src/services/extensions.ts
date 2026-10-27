@@ -275,7 +275,10 @@ export function buildExtensionPayload(manifest: AppManifest, origin: string): Wi
  * entry that declares no surfaces is returned UNTOUCHED — no new keys, no
  * payload churn for the apps that will never use this.
  */
-function flattenStyleNamespace(wire: WireExtension, manifest: AppManifest): WireExtension {
+export function flattenStyleNamespace<T extends { style_surfaces?: unknown[] }>(
+  wire: T,
+  manifest: Pick<AppManifest, 'style_var_prefix' | 'style_schema_version'>,
+): T {
   if (!wire.style_surfaces || wire.style_surfaces.length === 0) {
     return wire;
   }
