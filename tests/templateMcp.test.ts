@@ -211,4 +211,32 @@ describe('createMcpRoute', () => {
     expect((await POST(signedRequest(body))).status).toBe(409);
     expect(make).toHaveBeenCalledTimes(1);
   });
+
+  it('checks the in-memory guard FIRST, then the persistent hook (which holds across instances/pods)', async () => {
+    const persisted = new Set<string>();
+    const seenRequest = vi.fn(async (id: string) => {
+      if (persisted.has(id)) return true;
+      persisted.add(id);
+      return false;
+    });
+    const make = vi.fn(async () => ({ made: true }));
+    const podA = createMcpRoute({ secret: () => SECRET, declared, handlers: { echo: async () => 1, make }, seenRequest });
+    const podB = createMcpRoute({ secret: () => SECRET, declared, handlers: { echo: async () => 1, make }, seenRequest });
+    const body = call('make', {}, 7, 'cross-pod-id');
+    expect((await podA.POST(signedRequest(body))).status).toBe(200);
+    // Same pod: the memory guard answers without touching the store.
+    expect((await podA.POST(signedRequest(body))).status).toBe(409);
+    expect(seenRequest).toHaveBeenCalledTimes(1);
+    // Another pod: memory is empty there, the persistent hook catches it.
+    expect((await podB.POST(signedRequest(body))).status).toBe(409);
+    expect(seenRequest).toHaveBeenCalledTimes(2);
+    expect(make).toHaveBeenCalledTimes(1);
+  });
+
+  it('a read-only tool never consults either guard', async () => {
+    const seenRequest = vi.fn(async () => true);
+    const { POST } = createMcpRoute({ secret: () => SECRET, declared, handlers: { echo: async () => 'ok', make: async () => 1 }, seenRequest });
+    expect((await POST(signedRequest(call('echo', { text: 'x' }, 7, 'ro')))).status).toBe(200);
+    expect(seenRequest).not.toHaveBeenCalled();
+  });
 });

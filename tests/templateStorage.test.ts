@@ -154,6 +154,32 @@ describe('key safety', () => {
   });
 });
 
+describe('removePrefix only ever takes a slashed tenant prefix (both drivers)', () => {
+  const refused = ['', 'p1', 'p1/a', 'x/', 'a1/', 'p/', 'pa/', '../', 'p1/../', '/p1/'];
+  const allowed = ['p1/', 'p12/a3/', 'p12/a3/tiles/'];
+
+  it('isTenantPrefix is the one rule', async () => {
+    const { isTenantPrefix } = await load();
+    for (const p of refused) expect(isTenantPrefix(p), p).toBe(false);
+    for (const p of allowed) expect(isTenantPrefix(p), p).toBe(true);
+  });
+
+  it('local: a non-tenant prefix removes nothing', async () => {
+    const { getStorage } = await load();
+    const storage = getStorage();
+    await storage.save('p1/a/x.jpg', Buffer.from('x'));
+    for (const p of refused) expect(await storage.removePrefix(p), p).toBe(0);
+    expect(await storage.removePrefix('p1/a/')).toBe(1);
+  });
+
+  it('s3: a non-tenant prefix never lists or deletes', async () => {
+    useS3Env();
+    const { getStorage } = await load();
+    for (const p of refused) expect(await getStorage().removePrefix(p), p).toBe(0);
+    expect(sent).toHaveLength(0);
+  });
+});
+
 describe('local driver', () => {
   it('is the default and round-trips bytes', async () => {
     const { getStorage, resolveLocalPath } = await load();
