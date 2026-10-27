@@ -31,7 +31,7 @@ import { HISTORICAL_TEMPLATE_HASHES } from './template-manifest-history';
  * follow it every time `TEMPLATE_VERSION` bumps.
  */
 
-export const TEMPLATE_VERSION = '0.4.1';
+export const TEMPLATE_VERSION = '0.5.0';
 
 /**
  * Kit-owned files, relative to the `next-js` template root — the wiring
@@ -53,6 +53,8 @@ export const KIT_OWNED_FILES: readonly string[] = [
   'app/oauth/token/route.ts',
   'app/webhooks/flashmandu/route.ts',
   'lib/purge.ts',
+  'lib/storage.ts',
+  'lib/mcp.ts',
 ];
 
 /** relPath -> { templateVersion -> sha256(content) }. */
