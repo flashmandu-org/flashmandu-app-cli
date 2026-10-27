@@ -58,8 +58,9 @@ export interface AppStorage {
   /** Remove `key`. A missing object is NOT an error (purge idempotency). */
   remove(key: string): Promise<void>;
   /**
-   * Remove every object under `prefix` and return how many were removed. An
-   * empty or unsafe prefix removes nothing (it would mean the whole bucket).
+   * Remove every object under `prefix` and return how many were removed. Only
+   * a tenant prefix (`isTenantPrefix`) is honoured; anything else removes
+   * nothing.
    */
   removePrefix(prefix: string): Promise<number>;
   /** The URL the storefront / admin preview reads the file from. */
@@ -79,6 +80,16 @@ export interface AppStorage {
  */
 export function isSafeKey(key: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9/_.-]*$/.test(key) && !key.includes('..');
+}
+
+/**
+ * True for a prefix `removePrefix` may delete: a profile folder `p<id>/` or a
+ * folder inside one (`p<id>/a7/`), always slash-terminated. One rule for both
+ * drivers, so a bug can never purge the bucket root, another tenant's
+ * look-alike prefix (`p1` would also match `p12/` on S3) or a half key.
+ */
+export function isTenantPrefix(prefix: string): boolean {
+  return /^p\d+\/(.+\/)?$/.test(prefix) && isSafeKey(prefix);
 }
 
 /** The one prefix every key of a profile lives under: `p<profileId>/`. */
@@ -180,6 +191,9 @@ const localStorage: AppStorage = {
   },
 
   async removePrefix(prefix) {
+    if (!isTenantPrefix(prefix)) {
+      return 0;
+    }
     let abs: string;
     try {
       abs = resolveLocalPath(prefix.replace(/\/+$/, ''));
@@ -319,7 +333,7 @@ function s3Storage(env: S3Env): AppStorage {
     },
 
     async removePrefix(prefix) {
-      if (!isSafeKey(prefix)) {
+      if (!isTenantPrefix(prefix)) {
         return 0;
       }
       const { sdk, s3 } = await client(env);

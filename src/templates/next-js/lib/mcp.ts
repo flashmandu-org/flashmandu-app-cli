@@ -82,9 +82,11 @@ export interface CreateMcpRouteOptions {
   handlers: Record<string, McpHandler>;
   maxSkewSeconds?: number;
   /**
-   * Replay guard for WRITE tools: return true when this request id was
-   * already handled. Defaults to a bounded in-memory set (per process); back
-   * it with your database when you run more than one instance.
+   * PERSISTENT replay guard for WRITE tools: record `requestId` and return
+   * true when it was already recorded (e.g. a unique row in your database,
+   * kept longer than the signature skew window). Consulted AFTER the
+   * per-process in-memory guard, which always runs first; with more than one
+   * instance only this hook catches a replay sent to another pod.
    */
   seenRequest?: (requestId: string) => Promise<boolean> | boolean;
 }
@@ -168,7 +170,9 @@ export function createMcpRoute(opts: CreateMcpRouteOptions): { POST: (req: Reque
       ].filter(Boolean).join('; ')}.`,
     );
   }
-  const seenRequest = opts.seenRequest ?? memorySeen();
+  const seenInMemory = memorySeen();
+  const seenRequest = async (id: string): Promise<boolean> =>
+    seenInMemory(id) || (opts.seenRequest !== undefined && (await opts.seenRequest(id)));
 
   return {
     async POST(req: Request): Promise<Response> {
