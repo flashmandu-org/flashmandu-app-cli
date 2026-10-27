@@ -26,19 +26,48 @@ function realFileAt(commitish: string, rel: string): string {
   });
 }
 
+/** Kit-owned files first shipped AFTER 0.4.0 (template 0.5.0: the shared
+ * storage driver and the signed MCP endpoint). They have no 0.4.0 content,
+ * so no 0.4.0 hash may be recorded for them. */
+const ADDED_AFTER_0_4_0 = ['lib/storage.ts', 'lib/mcp.ts'];
+
+function existedAt(commitish: string, rel: string): boolean {
+  try {
+    realFileAt(commitish, rel);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Kit-owned files that existed at the 0.4.0 commit. */
+const KIT_OWNED_AT_0_4_0 = KIT_OWNED_FILES.filter((rel) => !ADDED_AFTER_0_4_0.includes(rel));
+
 async function tempDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), 'upgrade-history-test-'));
 }
 
 describe('HISTORICAL_TEMPLATE_HASHES', () => {
+  it('the files added after 0.4.0 are kit-owned, really absent at 0.4.0, and carry no invented 0.4.0 hash', () => {
+    for (const rel of ADDED_AFTER_0_4_0) {
+      expect(KIT_OWNED_FILES).toContain(rel);
+      expect(existedAt(V0_4_0_COMMIT, rel), `${rel} must not exist at ${V0_4_0_COMMIT}`).toBe(false);
+      expect(HISTORICAL_TEMPLATE_HASHES[rel]?.['0.4.0']).toBeUndefined();
+    }
+    // Every OTHER kit-owned file did exist at 0.4.0 — the filter below hides nothing.
+    for (const rel of KIT_OWNED_AT_0_4_0) {
+      expect(existedAt(V0_4_0_COMMIT, rel), `${rel} should exist at ${V0_4_0_COMMIT}`).toBe(true);
+    }
+  });
+
   it('records a 0.4.0 hash for every kit-owned file that existed at that commit', () => {
-    for (const rel of KIT_OWNED_FILES) {
+    for (const rel of KIT_OWNED_AT_0_4_0) {
       expect(HISTORICAL_TEMPLATE_HASHES[rel]?.['0.4.0'], `missing 0.4.0 hash for ${rel}`).toBeTruthy();
     }
   });
 
   it('matches the REAL git history content at the 0.4.0 commit for every kit-owned file', () => {
-    for (const rel of KIT_OWNED_FILES) {
+    for (const rel of KIT_OWNED_AT_0_4_0) {
       const realContent = realFileAt(V0_4_0_COMMIT, rel);
       expect(HISTORICAL_TEMPLATE_HASHES[rel]['0.4.0']).toBe(sha256(realContent));
     }
@@ -55,7 +84,7 @@ describe('HISTORICAL_TEMPLATE_HASHES', () => {
   it('every other kit-owned file is byte-identical between 0.4.0 and current, so its historical hash equals its current hash', () => {
     const templateRoot = resolveTemplateRoot();
     const currentManifest = buildManifest(templateRoot, 'current');
-    for (const rel of KIT_OWNED_FILES) {
+    for (const rel of KIT_OWNED_AT_0_4_0) {
       if (rel === 'app/PageChromeSetup.tsx') continue;
       expect(HISTORICAL_TEMPLATE_HASHES[rel]['0.4.0']).toBe(currentManifest[rel]['current']);
     }
