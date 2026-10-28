@@ -105,4 +105,11 @@ export const HISTORICAL_TEMPLATE_HASHES: TemplateManifest = {
   'lib/purge.ts': {
     '0.4.0': '48366a7ebb3da83cb39ec743cf372ce9eae7f69a0bbf63a9a352045a565dce9c',
   },
+  // 0.5.0 -> 0.5.1: only lib/storage.ts changed (private buckets by default,
+  // get() with Range for the gated file route, AWS/R2 config, human
+  // 'unavailable' storage errors). Recorded from 0523a46, the last commit
+  // whose storage.ts is what shipped as 0.5.0 (Tours 0.1.9 vendors it).
+  'lib/storage.ts': {
+    '0.5.0': 'e1ea509de5b6c1bf2749554bd65bbd7056c80d6cbaa433a4e9bd5808759165ea',
+  },
 };

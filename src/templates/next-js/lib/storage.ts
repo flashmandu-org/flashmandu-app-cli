@@ -1,4 +1,4 @@
-/* @flashmandu-template lib/storage.ts@0.5.0 */
+/* @flashmandu-template lib/storage.ts@0.5.1 */
 /**
  * App file storage — one interface, two drivers, picked per call from env.
  *
@@ -6,10 +6,16 @@
  *     tests point it at a tmp dir). Served by YOUR app's own file route at
  *     `/api/files/<key>`, which must re-check the owning row is allowed to be
  *     public before streaming (use `localPathForKey` + `createReadStream`).
- *   s3 — active when S3_ENDPOINT / S3_BUCKET / S3_ACCESS_KEY_ID /
- *     S3_SECRET_ACCESS_KEY are all set (S3-compatible: R2, MinIO, AWS). The
- *     browser uploads straight to a presigned PUT URL; reads come from the
- *     public base (S3_PUBLIC_BASE_URL, falling back to `<endpoint>/<bucket>`).
+ *   s3 — active when S3_BUCKET / S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY are
+ *     set plus either S3_ENDPOINT (R2, MinIO: `https://<acct>.r2.cloudflare
+ *     storage.com`, S3_REGION=auto) or a real S3_REGION alone (AWS, e.g.
+ *     ap-south-1, SDK default endpoint). The browser uploads straight to a
+ *     presigned PUT URL.
+ *   BUCKETS ARE NEVER PUBLIC (owner, 2026-10-28): AWS Block Public Access stays
+ *     on and R2 stays private. With no S3_PUBLIC_BASE_URL the s3 driver is in
+ *     PRIVATE mode (the default): `url(key)` is the app's own gated route
+ *     `/api/files/<key>`, which streams through `get()` (GetObject, Range
+ *     passed through). S3_PUBLIC_BASE_URL set = CDN mode, `url()` points there.
  *   STORAGE_DRIVER=local|s3 forces a driver; a forced s3 with an incomplete
  *     S3_* set throws instead of silently writing to local disk.
  *
@@ -32,6 +38,7 @@
 
 import { constants as fsConstants, createReadStream, promises as fs } from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 
 
 /** Presigned PUT lifetime, seconds. */
@@ -79,8 +86,27 @@ export interface PresignedUpload {
   key: string;
 }
 
+/** One stored object, ready to stream from a file route. */
+export interface StoredObject {
+  /** 200 whole object, 206 a byte range, 416 the range cannot be satisfied (no body). */
+  status: 200 | 206 | 416;
+  body: ReadableStream<Uint8Array> | null;
+  contentType: string;
+  /** Bytes in THIS response (the range length for a 206). */
+  contentLength: number;
+  /** `bytes a-b/size` for a 206; `bytes STAR/size` (STAR = a literal asterisk) for a 416. */
+  contentRange?: string;
+  etag?: string;
+  lastModified?: Date;
+}
+
 export interface AppStorage {
   readonly driver: 'local' | 's3';
+  /**
+   * True when `url()` is the app's own gated route rather than a public
+   * address: always for local, and for s3 unless S3_PUBLIC_BASE_URL is set.
+   */
+  readonly private: boolean;
   /** Persist `data` under `key`, creating parent directories as needed. */
   save(key: string, data: Buffer): Promise<void>;
   /** Remove `key`. A missing object is NOT an error (purge idempotency). */
@@ -95,6 +121,35 @@ export interface AppStorage {
   url(key: string): string;
   /** Presign a browser-direct PUT. The local driver refuses (upload through your own route). */
   presignPut(key: string, contentType: string): Promise<PresignedUpload>;
+  /**
+   * Read `key` for a file route, honouring an HTTP `Range` header value
+   * (`bytes=a-b`, `bytes=a-`, `bytes=-n`). Null when the key is unsafe or the
+   * object does not exist. Your route still owns every access gate.
+   */
+  get(key: string, opts?: { range?: string | null }): Promise<StoredObject | null>;
+}
+
+/**
+ * Resolve one `bytes=` range against `size`: `[start, end]` inclusive, null
+ * for "serve the whole object" (no/odd header, multi-range), or 'unsatisfiable'.
+ */
+export function parseByteRange(header: string | null | undefined, size: number): [number, number] | null | 'unsatisfiable' {
+  if (!header) return null;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (m === null || (m[1] === '' && m[2] === '')) return null;
+  let start: number;
+  let end: number;
+  if (m[1] === '') {
+    const suffix = Number(m[2]);
+    if (suffix === 0) return 'unsatisfiable';
+    start = Math.max(0, size - suffix);
+    end = size - 1;
+  } else {
+    start = Number(m[1]);
+    end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+  }
+  if (start >= size || start > end) return 'unsatisfiable';
+  return [start, end];
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +262,7 @@ async function countFiles(abs: string): Promise<number> {
 
 const localStorage: AppStorage = {
   driver: 'local',
+  private: true,
 
   async save(key, data) {
     const abs = resolveLocalPath(key);
@@ -244,6 +300,37 @@ const localStorage: AppStorage = {
   async presignPut() {
     throw new StorageError('The local driver does not presign; upload through the app\'s own upload route.');
   },
+
+  async get(key, opts) {
+    let abs: string;
+    try {
+      abs = resolveLocalPath(key);
+    } catch {
+      return null;
+    }
+    let stat;
+    try {
+      stat = await fs.stat(abs);
+    } catch {
+      return null;
+    }
+    if (!stat.isFile()) return null;
+    const size = stat.size;
+    const base = {
+      contentType: contentTypeForKey(key),
+      etag: `"${size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`,
+      lastModified: stat.mtime,
+    };
+    const range = parseByteRange(opts?.range, size);
+    if (range === 'unsatisfiable') {
+      return { ...base, status: 416, body: null, contentLength: 0, contentRange: `bytes */${size}` };
+    }
+    const [start, end] = range ?? [0, size - 1];
+    const body = Readable.toWeb(createReadStream(abs, size === 0 ? {} : { start, end })) as ReadableStream<Uint8Array>;
+    return range === null
+      ? { ...base, status: 200, body, contentLength: size }
+      : { ...base, status: 206, body, contentLength: end - start + 1, contentRange: `bytes ${start}-${end}/${size}` };
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -259,22 +346,34 @@ interface S3Env {
   publicBaseUrl: string;
 }
 
-function s3Env(): S3Env | null {
-  const endpoint = process.env.S3_ENDPOINT ?? '';
+/**
+ * The S3 settings from env, or null when incomplete. Two shapes:
+ *   R2 / MinIO — S3_ENDPOINT (`https://<acct>.r2.cloudflarestorage.com`),
+ *     S3_REGION `auto` (the default), path-style addressing.
+ *   AWS — no S3_ENDPOINT, a real S3_REGION (`ap-south-1`); the SDK picks the
+ *     regional endpoint and virtual-hosted addressing.
+ * `publicBaseUrl` is '' (PRIVATE mode, the default) unless S3_PUBLIC_BASE_URL
+ * names a CDN in front of the bucket.
+ */
+export function s3Config(): S3Env | null {
+  const endpoint = (process.env.S3_ENDPOINT ?? '').replace(/\/+$/, '');
   const bucket = process.env.S3_BUCKET ?? '';
   const accessKeyId = process.env.S3_ACCESS_KEY_ID ?? '';
   const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY ?? '';
-  if (endpoint === '' || bucket === '' || accessKeyId === '' || secretAccessKey === '') {
+  const region = process.env.S3_REGION ?? 'auto';
+  if (bucket === '' || accessKeyId === '' || secretAccessKey === '') {
     return null;
   }
-  const trimmed = endpoint.replace(/\/+$/, '');
+  if (endpoint === '' && (region === '' || region === 'auto')) {
+    return null;
+  }
   return {
-    endpoint: trimmed,
+    endpoint,
     bucket,
     accessKeyId,
     secretAccessKey,
-    region: process.env.S3_REGION ?? 'auto',
-    publicBaseUrl: (process.env.S3_PUBLIC_BASE_URL ?? `${trimmed}/${bucket}`).replace(/\/+$/, ''),
+    region,
+    publicBaseUrl: (process.env.S3_PUBLIC_BASE_URL ?? '').replace(/\/+$/, ''),
   };
 }
 
@@ -286,6 +385,12 @@ interface S3ClientLike {
     Contents?: Array<{ Key?: string }>;
     IsTruncated?: boolean;
     NextContinuationToken?: string;
+    Body?: { transformToWebStream(): ReadableStream<Uint8Array> };
+    ContentType?: string;
+    ContentLength?: number;
+    ContentRange?: string;
+    ETag?: string;
+    LastModified?: Date;
   }>;
 }
 interface S3Sdk {
@@ -294,6 +399,7 @@ interface S3Sdk {
   DeleteObjectCommand: S3CommandCtor;
   DeleteObjectsCommand: S3CommandCtor;
   ListObjectsV2Command: S3CommandCtor;
+  GetObjectCommand: S3CommandCtor;
   getSignedUrl(client: S3ClientLike, command: unknown, options: { expiresIn: number }): Promise<string>;
 }
 
@@ -329,11 +435,13 @@ async function client(env: S3Env): Promise<{ sdk: S3Sdk; s3: S3ClientLike }> {
   const id = `${env.endpoint}|${env.region}|${env.accessKeyId}`;
   let s3 = clients.get(id);
   if (!s3) {
+    // R2/MinIO: explicit endpoint, path-style. AWS: no endpoint (the SDK
+    // derives the regional one), virtual-hosted style.
     s3 = new sdk.S3Client({
-      endpoint: env.endpoint,
+      ...(env.endpoint !== '' ? { endpoint: env.endpoint } : {}),
       region: env.region,
       credentials: { accessKeyId: env.accessKeyId, secretAccessKey: env.secretAccessKey },
-      forcePathStyle: true,
+      forcePathStyle: env.endpoint !== '',
     });
     clients.set(id, s3);
   }
@@ -349,6 +457,7 @@ function assertKey(key: string): void {
 function s3Storage(env: S3Env): AppStorage {
   return {
     driver: 's3',
+    private: env.publicBaseUrl === '',
 
     async save(key, data) {
       assertKey(key);
@@ -386,7 +495,36 @@ function s3Storage(env: S3Env): AppStorage {
     },
 
     url(key) {
-      return `${env.publicBaseUrl}/${key}`;
+      // PRIVATE (default): the app's own gated route streams it via get().
+      return env.publicBaseUrl === '' ? `/api/files/${key}` : `${env.publicBaseUrl}/${key}`;
+    },
+
+    async get(key, opts) {
+      if (!isSafeKey(key)) return null;
+      const { sdk, s3 } = await client(env);
+      const range = opts?.range ? opts.range.trim() : '';
+      let out;
+      try {
+        out = await s3.send(
+          new sdk.GetObjectCommand({ Bucket: env.bucket, Key: key, ...(range !== '' ? { Range: range } : {}) }),
+        );
+      } catch (err) {
+        const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+        if (e.name === 'NoSuchKey' || e.name === 'NotFound' || e.$metadata?.httpStatusCode === 404) return null;
+        if (e.name === 'InvalidRange' || e.$metadata?.httpStatusCode === 416) {
+          return { status: 416, body: null, contentType: contentTypeForKey(key), contentLength: 0 };
+        }
+        throw err;
+      }
+      return {
+        status: out.ContentRange ? 206 : 200,
+        body: out.Body ? out.Body.transformToWebStream() : null,
+        contentType: out.ContentType ?? contentTypeForKey(key),
+        contentLength: out.ContentLength ?? 0,
+        ...(out.ContentRange ? { contentRange: out.ContentRange } : {}),
+        ...(out.ETag ? { etag: out.ETag } : {}),
+        ...(out.LastModified ? { lastModified: out.LastModified } : {}),
+      };
     },
 
     async presignPut(key, contentType) {
@@ -415,7 +553,7 @@ export function getStorage(): AppStorage {
   if (forced === 'local') {
     return localStorage;
   }
-  const env = s3Env();
+  const env = s3Config();
   if (env !== null) {
     return s3Storage(env);
   }
@@ -450,11 +588,15 @@ export async function assertStorageWritable(): Promise<void> {
 
 /** Human-readable summary for a Settings / diagnostics screen. */
 export function storageInfo(): { driver: 'local' | 's3'; detail: string } {
-  const env = getStorage().driver === 's3' ? s3Env() : null;
+  const env = getStorage().driver === 's3' ? s3Config() : null;
   if (env === null) {
     return { driver: 'local', detail: uploadsRoot() };
   }
-  return { driver: 's3', detail: `${env.endpoint}/${env.bucket} (cdn: ${env.publicBaseUrl})` };
+  const where = env.endpoint !== '' ? `${env.endpoint}/${env.bucket}` : `s3://${env.bucket} (${env.region})`;
+  return {
+    driver: 's3',
+    detail: env.publicBaseUrl === '' ? `${where} (private: served by the app)` : `${where} (cdn: ${env.publicBaseUrl})`,
+  };
 }
 
 // Re-exported so file routes can stream local files without importing node:fs.
