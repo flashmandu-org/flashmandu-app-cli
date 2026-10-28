@@ -181,3 +181,25 @@ describe('next.config.js 0.5.1 is on record (output: standalone landed in 0.6.0)
     expect(await fs.readFile(path.join(cwd, 'next.config.js'), 'utf8')).toContain("output: 'standalone'");
   });
 });
+
+describe('lib/mcp.ts 0.6.0 is on record (ctx.apiToken landed in 0.6.1)', () => {
+  it('records the real 0.6.0 mcp.ts hash and upgrade moves that content forward, not forked', async () => {
+    const real = realFileAt('f83cd0b', 'lib/mcp.ts');
+    expect(real).not.toContain('apiToken');
+    expect(HISTORICAL_TEMPLATE_HASHES['lib/mcp.ts']?.['0.6.0']).toBe(sha256(real));
+
+    const cwd = await tempDir();
+    const templateRoot = resolveTemplateRoot();
+    for (const rel of KIT_OWNED_FILES) {
+      const abs = path.join(cwd, rel);
+      await fs.mkdir(path.dirname(abs), { recursive: true });
+      if (rel === 'lib/mcp.ts') {
+        await fs.writeFile(abs, real, 'utf8');
+      } else {
+        await fs.copyFile(path.join(templateRoot, rel), abs);
+      }
+    }
+    const results = upgradeApp(cwd, { manifest: defaultManifest() });
+    expect(results.find((r) => r.rel === 'lib/mcp.ts')?.status).toBe('upgraded');
+  });
+});

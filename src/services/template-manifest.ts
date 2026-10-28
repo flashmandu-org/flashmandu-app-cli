@@ -31,7 +31,7 @@ import { HISTORICAL_TEMPLATE_HASHES } from './template-manifest-history';
  * follow it every time `TEMPLATE_VERSION` bumps.
  */
 
-export const TEMPLATE_VERSION = '0.6.0';
+export const TEMPLATE_VERSION = '0.6.1';
 
 /**
  * Kit-owned files, relative to the `next-js` template root — the wiring

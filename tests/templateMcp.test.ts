@@ -128,6 +128,17 @@ describe('createMcpRoute', () => {
     expect(seen[0]).toMatchObject({ profileId: 7, requestId: 'req-1', args: { text: 'hi' } });
   });
 
+  it('hands the handler the SIGNED body api_token (short-lived install token for host calls), null from an older host', async () => {
+    const seen: any[] = [];
+    const { POST } = route({ echo: async (ctx: any) => { seen.push(ctx); return 1; } });
+    await POST(signedRequest({ ...call('echo', { text: 'a' }, 7), api_token: 'inst_tok_7' }));
+    await POST(signedRequest(call('echo', { text: 'b' }, 7)));
+    await POST(signedRequest({ ...call('echo', { text: 'c' }, 7), api_token: 42 }));
+    await POST(signedRequest({ ...call('echo', { text: 'd', api_token: 'from_args' }, 7) }));
+    expect(seen.map((c) => c.apiToken)).toEqual(['inst_tok_7', null, null, null]);
+    expect('api_token' in seen[3].args).toBe(false);
+  });
+
   it('never trusts an arguments.profile_id: it is dropped before the handler sees args', async () => {
     const seen: any[] = [];
     const { POST } = route({ echo: async (ctx: any) => { seen.push(ctx); return 1; } });

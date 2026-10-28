@@ -1,4 +1,4 @@
-/* @flashmandu-template lib/mcp.ts@0.5.0 */
+/* @flashmandu-template lib/mcp.ts@0.6.1 */
 /**
  * Your app's MCP tools, called by merchants' AI agents through the platform.
  *
@@ -8,11 +8,19 @@
  *   headers  X-App-Event: mcp.tool_call
  *            X-App-Signature: hex(hmac_sha256("{timestamp}.{raw body}", webhook_secret))
  *            X-App-Timestamp, X-App-Delivery (= request_id)
- *   body     { "tool": "...", "arguments": {...}, "profile_id": 123, "request_id": "uuid" }
+ *   body     { "tool": "...", "arguments": {...}, "profile_id": 123, "request_id": "uuid",
+ *              "api_token": "..." }
  *
  * It is the same signature as webhooks, verified with the bridge's
  * `verifyWebhook` over the RAW body. The platform has already checked the
  * merchant's toggle, the plan and your GRANTED scopes before it sends.
+ *
+ * HOST CALLS. `api_token` (signed with the body, newer hosts) is a SHORT-LIVED
+ * install token for `profile_id`; handlers get it as `ctx.apiToken` and use it
+ * as the Bearer for host calls (`createFlashmanduClient({ apiBase:
+ * loadConfig().apiBase, token: ctx.apiToken })`). It is null from an older
+ * host: refuse host work then, never fall back to the pod's own token (that
+ * one is pinned to a single install). Never log or return it.
  *
  * TENANCY. Act ONLY for the signed top-level `profile_id`. Any `profile_id`
  * inside `arguments` is dropped before your handler runs (the platform strips
@@ -60,6 +68,8 @@ export interface McpCallContext {
   args: Record<string, unknown>;
   /** The platform's request id (also X-App-Delivery). */
   requestId: string;
+  /** The signed body's short-lived install `api_token` for host calls; null from an older host. */
+  apiToken: string | null;
 }
 
 export type McpHandler = (ctx: McpCallContext) => Promise<unknown> | unknown;
@@ -223,7 +233,8 @@ export function createMcpRoute(opts: CreateMcpRouteOptions): { POST: (req: Reque
       }
 
       try {
-        const result = await opts.handlers[tool.name]({ profileId, args, requestId });
+        const apiToken = typeof body.api_token === 'string' && body.api_token !== '' ? body.api_token : null;
+        const result = await opts.handlers[tool.name]({ profileId, args, requestId, apiToken });
         return json({ ok: true, result: result ?? null }, 200);
       } catch (err) {
         if (err instanceof McpToolError) {

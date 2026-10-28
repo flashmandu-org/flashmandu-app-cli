@@ -117,4 +117,10 @@ export const HISTORICAL_TEMPLATE_HASHES: TemplateManifest = {
   'lib/storage.ts': {
     '0.5.0': 'e1ea509de5b6c1bf2749554bd65bbd7056c80d6cbaa433a4e9bd5808759165ea',
   },
+  // 0.6.0 -> 0.6.1: only lib/mcp.ts changed (handlers get the signed body's
+  // short-lived install `api_token` as ctx.apiToken). Recorded from f83cd0b,
+  // HEAD before the edit (Tours 0.1.11 vendors this content).
+  'lib/mcp.ts': {
+    '0.6.0': 'd9705e9a8fc74293a055d216a8911ed7dce239872f55cfe8dc9ea88b34b8ccf0',
+  },
 };
