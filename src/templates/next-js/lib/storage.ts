@@ -30,18 +30,46 @@
  * change it HERE and re-vendor, never fork a copy.
  */
 
-import { createReadStream, promises as fs } from 'node:fs';
+import { constants as fsConstants, createReadStream, promises as fs } from 'node:fs';
 import path from 'node:path';
 
 
 /** Presigned PUT lifetime, seconds. */
 export const PRESIGN_TTL_SECONDS = 15 * 60;
 
+/**
+ * `invalid` — the caller asked for something wrong (bad key, misconfigured
+ *   driver choice); the message is safe to show.
+ * `unavailable` — storage itself is not usable (unwritable disk, no S3 env on
+ *   the pod). The message is the fixed, human STORAGE_UNAVAILABLE_MESSAGE;
+ *   the real errno and path go to the server log only, never to a person.
+ */
+export type StorageErrorCode = 'invalid' | 'unavailable';
+
 export class StorageError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    public readonly code: StorageErrorCode = 'invalid',
+  ) {
     super(message);
     this.name = 'StorageError';
   }
+}
+
+/** What a person sees when storage is not set up. Apps may word their own from `code`. */
+export const STORAGE_UNAVAILABLE_MESSAGE = "File storage isn't set up for this app yet.";
+
+/** fs errors that mean "this disk cannot take our files", not "this request was wrong". */
+const UNAVAILABLE_ERRNOS = new Set(['EACCES', 'EPERM', 'EROFS', 'ENOSPC']);
+
+function unavailable(cause: unknown): StorageError {
+  console.error('[storage] local storage is not writable', cause);
+  return new StorageError(STORAGE_UNAVAILABLE_MESSAGE, 'unavailable');
+}
+
+function isUnavailableErrno(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && UNAVAILABLE_ERRNOS.has(code);
 }
 
 export interface PresignedUpload {
@@ -182,8 +210,12 @@ const localStorage: AppStorage = {
 
   async save(key, data) {
     const abs = resolveLocalPath(key);
-    await fs.mkdir(path.dirname(abs), { recursive: true });
-    await fs.writeFile(abs, data);
+    try {
+      await fs.mkdir(path.dirname(abs), { recursive: true });
+      await fs.writeFile(abs, data);
+    } catch (err) {
+      throw isUnavailableErrno(err) ? unavailable(err) : err;
+    }
   },
 
   async remove(key) {
@@ -393,6 +425,27 @@ export function getStorage(): AppStorage {
     );
   }
   return localStorage;
+}
+
+/**
+ * Fail FAST, before any work, when the active driver cannot store a file:
+ * the local driver must be able to create and write its uploads root (on a
+ * pod with no S3 env that root is usually read-only). Throws a StorageError
+ * with code `unavailable` and STORAGE_UNAVAILABLE_MESSAGE; the s3 driver is
+ * a no-op (its credentials are checked by the first real call). Call it at
+ * the top of every route that is about to accept or fetch a file.
+ */
+export async function assertStorageWritable(): Promise<void> {
+  if (getStorage().driver !== 'local') {
+    return;
+  }
+  const root = uploadsRoot();
+  try {
+    await fs.mkdir(root, { recursive: true });
+    await fs.access(root, fsConstants.W_OK);
+  } catch (err) {
+    throw unavailable(err);
+  }
 }
 
 /** Human-readable summary for a Settings / diagnostics screen. */
