@@ -303,3 +303,58 @@ describe('s3 driver', () => {
     });
   });
 });
+
+describe('local driver — storage that is not set up is a human error, never an errno or a path', () => {
+  async function readOnlyRoot(): Promise<string> {
+    const parent = mkdtempSync(path.join(os.tmpdir(), 'starter-storage-ro-'));
+    roots.push(parent);
+    await fs.chmod(parent, 0o500);
+    return path.join(parent, 'uploads');
+  }
+
+  afterEach(async () => {
+    // Let afterAll clean the read-only parents.
+    for (const r of roots) await fs.chmod(r, 0o700).catch(() => {});
+  });
+
+  it('assertStorageWritable passes for a writable root and creates it', async () => {
+    const root = path.join(process.env.UPLOADS_DIR!, 'fresh');
+    process.env.UPLOADS_DIR = root;
+    const { assertStorageWritable } = await load();
+    await expect(assertStorageWritable()).resolves.toBeUndefined();
+    expect(existsSync(root)).toBe(true);
+  });
+
+  it('assertStorageWritable fails up front with code "unavailable" and a human message', async () => {
+    process.env.UPLOADS_DIR = await readOnlyRoot();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { assertStorageWritable, StorageError, STORAGE_UNAVAILABLE_MESSAGE } = await load();
+    const err = await assertStorageWritable().then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(StorageError);
+    expect((err as InstanceType<typeof StorageError>).code).toBe('unavailable');
+    expect((err as Error).message).toBe(STORAGE_UNAVAILABLE_MESSAGE);
+    expect((err as Error).message).not.toMatch(/EACCES|EPERM|mkdir|\//);
+    // The real cause still reaches the server log.
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it('save() into an unwritable root throws the same human StorageError, not the raw fs error', async () => {
+    process.env.UPLOADS_DIR = await readOnlyRoot();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { getStorage, StorageError } = await load();
+    const err = await getStorage()
+      .save('p1/a1/original.jpg', Buffer.from('x'))
+      .then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(StorageError);
+    expect((err as InstanceType<typeof StorageError>).code).toBe('unavailable');
+    expect((err as Error).message).not.toMatch(/EACCES|mkdir|\//);
+    error.mockRestore();
+  });
+
+  it('assertStorageWritable is a no-op on the s3 driver', async () => {
+    useS3Env();
+    const { assertStorageWritable } = await load();
+    await expect(assertStorageWritable()).resolves.toBeUndefined();
+  });
+});
