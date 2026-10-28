@@ -8,7 +8,14 @@
 # Database migrations and seeding run at container boot (see
 # docker-entrypoint.sh), not at deploy time — every pod starts on the current
 # schema before it serves traffic. Both steps are conditional: an app without
-# a prisma/ directory or a db:seed script boots straight into `next start`.
+# a prisma/ directory or a db:seed script boots straight into the server.
+#
+# The runtime image is Next's `output: 'standalone'` bundle (see next.config.js):
+# only the traced server (.next/standalone), .next/static, public/, prisma/ and the
+# entrypoint are copied. The full node_modules and .next/cache never ship, which
+# keeps the image a fraction of the size. The Prisma CLI and tsx, which the boot
+# sequence needs for `migrate deploy` and the seed, are installed once into a
+# separate /opt/tools dir at the exact versions the app resolved at build time.
 
 FROM node:22-alpine AS deps
 WORKDIR /app
@@ -53,6 +60,22 @@ ENV FLASHMANDU_DEV_BOX_BASE_URL="https://build.example"
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
+# Boot-time tools: the exact installed versions of the Prisma CLI and tsx (empty
+# when the app uses neither), written as npm specs for the `tools` stage.
+RUN node -e "const fs=require('fs');const s=[];for(const n of ['prisma','tsx']){try{s.push(n+'@'+require('/app/node_modules/'+n+'/package.json').version)}catch{}}fs.writeFileSync('/app/.runtime-tools',s.join(' '))"
+
+# Install only those tools, away from the app's node_modules, so the runner can
+# copy them without dragging the build toolchain along. openssl lets the Prisma
+# installer detect the musl platform and fetch the right engines.
+FROM node:22-alpine AS tools
+RUN apk add --no-cache openssl libc6-compat
+WORKDIR /tools
+COPY --from=builder /app/.runtime-tools ./.runtime-tools
+RUN mkdir -p node_modules \
+    && if [ -s .runtime-tools ]; then \
+         npm init -y >/dev/null && npm install --no-audit --no-fund --omit=dev $(cat .runtime-tools); \
+       fi
+
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
@@ -62,7 +85,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # `prisma migrate deploy` on boot, which loads the query engine.
 RUN apk add --no-cache openssl libc6-compat
 
-# The platform's Service targets port 3000; `next start` honours $PORT.
+# The platform's Service targets port 3000; the standalone server honours $PORT.
 ENV PORT=3000
 EXPOSE 3000
 
@@ -70,18 +93,23 @@ EXPOSE 3000
 # that does not need root should not have it — the two are complementary.
 RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/docker-entrypoint.sh ./docker-entrypoint.sh
+# Prisma CLI + tsx for the entrypoint (empty dir for an app that uses neither).
+COPY --from=tools --chown=nextjs:nodejs /tools/node_modules /opt/tools/node_modules
+ENV PATH="/opt/tools/node_modules/.bin:${PATH}"
 
-# The engines dir ships read-only (root-owned); chown so a non-root runtime can
-# write a fetched engine if it ever needs to, and so migrate deploy never hits a
-# permission error. Only present when the app depends on Prisma.
-RUN if [ -d /app/node_modules/@prisma ]; then chown -R nextjs:nodejs /app/node_modules/@prisma; fi \
-    && chmod +x /app/docker-entrypoint.sh
+# The standalone server (server.js + only the node_modules it traces), then the
+# static assets and public/ it deliberately does not copy itself. `.next/cache`
+# is never copied. package.json is tiny and lets the entrypoint run the app's own
+# `db:seed` script.
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/package.json ./package.json
+COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
+COPY --from=builder --chown=nextjs:nodejs --chmod=755 /app/docker-entrypoint.sh ./docker-entrypoint.sh
+
+# Next may write its runtime cache (ISR, image optimizer) here; it ships empty.
+RUN mkdir -p /app/.next/cache && chown nextjs:nodejs /app/.next/cache
 
 USER nextjs
 

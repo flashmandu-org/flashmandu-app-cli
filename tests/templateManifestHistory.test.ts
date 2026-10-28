@@ -85,7 +85,8 @@ describe('HISTORICAL_TEMPLATE_HASHES', () => {
     const templateRoot = resolveTemplateRoot();
     const currentManifest = buildManifest(templateRoot, 'current');
     for (const rel of KIT_OWNED_AT_0_4_0) {
-      if (rel === 'app/PageChromeSetup.tsx') continue;
+      // PageChromeSetup changed in 0.4.1, next.config.js in 0.6.0 (output: 'standalone').
+      if (rel === 'app/PageChromeSetup.tsx' || rel === 'next.config.js') continue;
       expect(HISTORICAL_TEMPLATE_HASHES[rel]['0.4.0']).toBe(currentManifest[rel]['current']);
     }
   });
@@ -158,5 +159,25 @@ describe('lib/storage.ts 0.5.0 is on record (private buckets + human storage err
     }
     const results = upgradeApp(cwd, { manifest: defaultManifest() });
     expect(results.find((r) => r.rel === 'lib/storage.ts')?.status).toBe('upgraded');
+  });
+});
+
+describe('next.config.js 0.5.1 is on record (output: standalone landed in 0.6.0)', () => {
+  it('records the real 0.5.1 next.config.js hash and upgrade moves that content forward, not forked', async () => {
+    const real = realFileAt('91a9e5a', 'next.config.js');
+    expect(real).not.toContain("output: 'standalone'");
+    expect(HISTORICAL_TEMPLATE_HASHES['next.config.js']?.['0.5.1']).toBe(sha256(real));
+
+    const cwd = await tempDir();
+    const templateRoot = resolveTemplateRoot();
+    for (const rel of KIT_OWNED_FILES) {
+      const abs = path.join(cwd, rel);
+      await fs.mkdir(path.dirname(abs), { recursive: true });
+      await fs.copyFile(path.join(templateRoot, rel), abs);
+    }
+    await fs.writeFile(path.join(cwd, 'next.config.js'), real, 'utf8');
+    const results = upgradeApp(cwd, { manifest: defaultManifest() });
+    expect(results.find((r) => r.rel === 'next.config.js')?.status).toBe('upgraded');
+    expect(await fs.readFile(path.join(cwd, 'next.config.js'), 'utf8')).toContain("output: 'standalone'");
   });
 });

@@ -69,8 +69,13 @@ export const HISTORICAL_TEMPLATE_HASHES: TemplateManifest = {
   // between the two versions, so its 0.4.0 hash equals its current hash —
   // recorded here anyway for a complete, self-contained record of what
   // 0.4.0 actually shipped.
+  // 0.5.1 -> 0.6.0: next.config.js gained `output: 'standalone'` (platform
+  // images ship the traced standalone server). The 0.5.1 content is byte-identical
+  // to 0.4.0, so both versions share one hash (recorded from f41deb5's file, HEAD
+  // before the 0.6.0 edit).
   'next.config.js': {
     '0.4.0': '604475885ca24caadba16b0fea95f51e704c4fb1436ae3b78b9d9f50e4847305',
+    '0.5.1': '604475885ca24caadba16b0fea95f51e704c4fb1436ae3b78b9d9f50e4847305',
   },
   'app/globals.css': {
     '0.4.0': 'f3e0691b0cf1e32ce33b2e641c9052ef263f7b5475c23960700dcc740d5b7f9b',
