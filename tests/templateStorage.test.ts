@@ -21,6 +21,8 @@ import path from 'node:path';
  */
 
 const sent: Array<{ name: string; input: Record<string, unknown> }> = [];
+const clientConfigs: Array<Record<string, unknown>> = [];
+let getObjectReply: Record<string, unknown> | Error = {};
 let listPages: Array<{ Contents?: Array<{ Key: string }>; IsTruncated?: boolean; NextContinuationToken?: string }> = [];
 
 vi.mock('@aws-sdk/client-s3', () => {
@@ -31,17 +33,24 @@ vi.mock('@aws-sdk/client-s3', () => {
   class DeleteObjectCommand extends Command {}
   class DeleteObjectsCommand extends Command {}
   class ListObjectsV2Command extends Command {}
+  class GetObjectCommand extends Command {}
   class S3Client {
-    constructor(public config: Record<string, unknown>) {}
+    constructor(public config: Record<string, unknown>) {
+      clientConfigs.push(config);
+    }
     async send(cmd: Command): Promise<unknown> {
       sent.push({ name: cmd.constructor.name, input: cmd.input });
+      if (cmd instanceof GetObjectCommand) {
+        if (getObjectReply instanceof Error) throw getObjectReply;
+        return getObjectReply;
+      }
       if (cmd instanceof ListObjectsV2Command) {
         return listPages.shift() ?? { Contents: [], IsTruncated: false };
       }
       return {};
     }
   }
-  return { S3Client, PutObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command };
+  return { S3Client, PutObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command, GetObjectCommand };
 });
 
 vi.mock('@aws-sdk/s3-request-presigner', () => ({
@@ -79,6 +88,8 @@ beforeEach(() => {
   roots.push(root);
   process.env.UPLOADS_DIR = root;
   sent.length = 0;
+  clientConfigs.length = 0;
+  getObjectReply = {};
   listPages = [];
 });
 
@@ -274,13 +285,15 @@ describe('s3 driver', () => {
     expect(sent).toHaveLength(0);
   });
 
-  it('url uses S3_PUBLIC_BASE_URL, else <endpoint>/<bucket>', async () => {
+  it('buckets are private by default: no S3_PUBLIC_BASE_URL means url() is the app\'s own gated route (owner 2026-10-28)', async () => {
     useS3Env();
     let mod = await load();
-    expect(mod.getStorage().url('p1/x.jpg')).toBe('https://r2.example.com/bucket/p1/x.jpg');
+    expect(mod.getStorage().private).toBe(true);
+    expect(mod.getStorage().url('p1/x.jpg')).toBe('/api/files/p1/x.jpg');
     useS3Env({ S3_PUBLIC_BASE_URL: 'https://cdn.example.com/' });
     mod = await load();
     expect(mod.getStorage().url('p1/x.jpg')).toBe('https://cdn.example.com/p1/x.jpg');
+    expect(mod.getStorage().private).toBe(false);
   });
 
   it('presignPut signs a 15-minute PUT and echoes the key', async () => {
@@ -301,6 +314,10 @@ describe('s3 driver', () => {
       driver: 's3',
       detail: 'https://r2.example.com/bucket (cdn: https://cdn.example.com)',
     });
+    for (const k of S3_KEYS) delete process.env[k];
+    useS3Env();
+    mod = await load();
+    expect(mod.storageInfo().detail).toBe('https://r2.example.com/bucket (private: served by the app)');
   });
 });
 
@@ -356,5 +373,115 @@ describe('local driver — storage that is not set up is a human error, never an
     useS3Env();
     const { assertStorageWritable } = await load();
     await expect(assertStorageWritable()).resolves.toBeUndefined();
+  });
+});
+
+
+describe('s3 config — AWS and Cloudflare R2, both private', () => {
+  it('parses an R2 config (account endpoint, region auto) as private path-style', async () => {
+    useS3Env({ S3_ENDPOINT: 'https://acct123.r2.cloudflarestorage.com/', S3_REGION: 'auto' });
+    const { s3Config, getStorage } = await load();
+    expect(s3Config()).toMatchObject({
+      endpoint: 'https://acct123.r2.cloudflarestorage.com',
+      bucket: 'bucket',
+      region: 'auto',
+      publicBaseUrl: '',
+    });
+    await getStorage().save('p1/a.jpg', Buffer.from('x'));
+    expect(clientConfigs.at(-1)).toMatchObject({
+      endpoint: 'https://acct123.r2.cloudflarestorage.com',
+      region: 'auto',
+      forcePathStyle: true,
+    });
+  });
+
+  it('parses an AWS config with only a region (no endpoint): SDK default endpoint, virtual-host style', async () => {
+    process.env.S3_BUCKET = 'tours-prod';
+    process.env.S3_ACCESS_KEY_ID = 'id';
+    process.env.S3_SECRET_ACCESS_KEY = 'secret';
+    process.env.S3_REGION = 'ap-south-1';
+    const { s3Config, getStorage } = await load();
+    expect(s3Config()).toMatchObject({ endpoint: '', bucket: 'tours-prod', region: 'ap-south-1', publicBaseUrl: '' });
+    expect(getStorage().driver).toBe('s3');
+    await getStorage().save('p1/a.jpg', Buffer.from('x'));
+    const cfg = clientConfigs.at(-1)!;
+    expect(cfg.region).toBe('ap-south-1');
+    expect(cfg.endpoint).toBeUndefined();
+    expect(cfg.forcePathStyle).toBe(false);
+  });
+
+  it('an AWS config with neither endpoint nor a real region is incomplete', async () => {
+    process.env.S3_BUCKET = 'b';
+    process.env.S3_ACCESS_KEY_ID = 'id';
+    process.env.S3_SECRET_ACCESS_KEY = 'secret';
+    const { s3Config } = await load();
+    expect(s3Config()).toBeNull();
+  });
+});
+
+describe('get(key, range) — the read path behind the gated file route', () => {
+  async function text(body: ReadableStream<Uint8Array>): Promise<string> {
+    return Buffer.from(await new Response(body).arrayBuffer()).toString('utf8');
+  }
+
+  it('local: whole file with type, length, etag and last-modified', async () => {
+    const { getStorage } = await load();
+    await getStorage().save('p1/a1/original.jpg', Buffer.from('0123456789'));
+    const obj = (await getStorage().get('p1/a1/original.jpg'))!;
+    expect(obj.status).toBe(200);
+    expect(obj.contentType).toBe('image/jpeg');
+    expect(obj.contentLength).toBe(10);
+    expect(obj.etag).toMatch(/^"[^"]+"$/);
+    expect(obj.lastModified).toBeInstanceOf(Date);
+    expect(await text(obj.body!)).toBe('0123456789');
+  });
+
+  it('local: a byte range is a 206 with Content-Range; an unsatisfiable one is a 416', async () => {
+    const { getStorage } = await load();
+    await getStorage().save('p1/a1/original.jpg', Buffer.from('0123456789'));
+    const part = (await getStorage().get('p1/a1/original.jpg', { range: 'bytes=2-5' }))!;
+    expect(part.status).toBe(206);
+    expect(part.contentRange).toBe('bytes 2-5/10');
+    expect(part.contentLength).toBe(4);
+    expect(await text(part.body!)).toBe('2345');
+    const tail = (await getStorage().get('p1/a1/original.jpg', { range: 'bytes=-3' }))!;
+    expect(await text(tail.body!)).toBe('789');
+    const bad = (await getStorage().get('p1/a1/original.jpg', { range: 'bytes=50-60' }))!;
+    expect(bad.status).toBe(416);
+    expect(bad.contentRange).toBe('bytes */10');
+  });
+
+  it('local: a missing key or unsafe key is null', async () => {
+    const { getStorage } = await load();
+    expect(await getStorage().get('p1/none.jpg')).toBeNull();
+    expect(await getStorage().get('../etc/passwd')).toBeNull();
+  });
+
+  it('s3: GetObjectCommand with the Range passed through; headers mapped', async () => {
+    useS3Env();
+    const body = new Blob(['2345']).stream();
+    getObjectReply = {
+      Body: { transformToWebStream: () => body },
+      ContentType: 'image/jpeg',
+      ContentLength: 4,
+      ContentRange: 'bytes 2-5/10',
+      ETag: '"abc"',
+      LastModified: new Date('2026-10-28T00:00:00Z'),
+    };
+    const { getStorage } = await load();
+    const obj = (await getStorage().get('p1/a1/original.jpg', { range: 'bytes=2-5' }))!;
+    expect(sent.at(-1)).toEqual({ name: 'GetObjectCommand', input: { Bucket: 'bucket', Key: 'p1/a1/original.jpg', Range: 'bytes=2-5' } });
+    expect(obj).toMatchObject({ status: 206, contentType: 'image/jpeg', contentLength: 4, contentRange: 'bytes 2-5/10', etag: '"abc"' });
+    expect(await text(obj.body!)).toBe('2345');
+  });
+
+  it('s3: NoSuchKey is null; InvalidRange is a 416', async () => {
+    useS3Env();
+    getObjectReply = Object.assign(new Error('nope'), { name: 'NoSuchKey', $metadata: { httpStatusCode: 404 } });
+    let mod = await load();
+    expect(await mod.getStorage().get('p1/x.jpg')).toBeNull();
+    getObjectReply = Object.assign(new Error('range'), { name: 'InvalidRange', $metadata: { httpStatusCode: 416 } });
+    mod = await load();
+    expect((await mod.getStorage().get('p1/x.jpg', { range: 'bytes=99-' }))!.status).toBe(416);
   });
 });

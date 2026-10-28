@@ -138,3 +138,25 @@ describe('upgradeApp against real recovered 0.4.0 content', () => {
     expect(await fs.readFile(path.join(cwd, 'app/PageChromeSetup.tsx'), 'utf8')).toBe(handEdited);
   });
 });
+
+
+describe('lib/storage.ts 0.5.0 is on record (private buckets + human storage errors landed in 0.5.1)', () => {
+  it('records the real 0.5.0 storage.ts hash and upgrade treats that content as upgradable, not forked', async () => {
+    const real = realFileAt('0523a46', 'lib/storage.ts');
+    expect(HISTORICAL_TEMPLATE_HASHES['lib/storage.ts']?.['0.5.0']).toBe(sha256(real));
+
+    const cwd = await tempDir();
+    const templateRoot = resolveTemplateRoot();
+    for (const rel of KIT_OWNED_FILES) {
+      const abs = path.join(cwd, rel);
+      await fs.mkdir(path.dirname(abs), { recursive: true });
+      if (rel === 'lib/storage.ts') {
+        await fs.writeFile(abs, real, 'utf8');
+      } else {
+        await fs.copyFile(path.join(templateRoot, rel), abs);
+      }
+    }
+    const results = upgradeApp(cwd, { manifest: defaultManifest() });
+    expect(results.find((r) => r.rel === 'lib/storage.ts')?.status).toBe('upgraded');
+  });
+});
