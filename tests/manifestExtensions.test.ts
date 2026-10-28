@@ -366,3 +366,28 @@ block_path = "/embed/plain"
     );
   });
 });
+
+describe('embed block media_path', () => {
+  const TOML_WITH_MEDIA = `${BASE}
+[[embed_blocks]]
+type       = "virtual-tour"
+name       = "Virtual Tour"
+block_path = "/embed/virtual-tour"
+media_path = "/api/blocks/virtual-tour/media"
+`;
+
+  it('keeps media_path through parsing and onto the wire extension', () => {
+    expect(parse(TOML_WITH_MEDIA).embed_blocks?.[0]?.media_path).toBe('/api/blocks/virtual-tour/media');
+    const wire = payloadFor(TOML_WITH_MEDIA).find((w) => w.type === 'virtual-tour');
+    expect(wire?.media_path).toBe('/api/blocks/virtual-tour/media');
+  });
+
+  it('omits media_path on the wire when the block declares none', () => {
+    const wire = payloadFor(TOML_WITH_MEDIA.replace(/^media_path.*$/m, '')).find((w) => w.type === 'virtual-tour');
+    expect(wire && 'media_path' in wire).toBe(false);
+  });
+
+  it('refuses a media_path that is not a path', () => {
+    expect(() => parse(TOML_WITH_MEDIA.replace('"/api/blocks', '"api/blocks'))).toThrow();
+  });
+});

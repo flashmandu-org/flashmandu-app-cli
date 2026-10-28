@@ -83,6 +83,7 @@ export interface WireExtension {
   /** Embed-block compatibility keys. Present only on a desugared block. */
   type?: string;
   block_path?: string;
+  media_path?: string;
   /**
    * Style Surfaces. `style_surfaces` is authored per block/extension, but
    * `style_var_prefix` / `style_schema_version` are APP-level manifest keys —
@@ -233,6 +234,9 @@ function toWire(e: ManifestExtension, origin: string, embedBlockOf?: EmbedBlock)
   if (embedBlockOf) {
     wire.type = embedBlockOf.type;
     wire.block_path = embedBlockOf.block_path;
+    if (embedBlockOf.media_path) {
+      wire.media_path = embedBlockOf.media_path;
+    }
   }
 
   if (e.style_surfaces && e.style_surfaces.length > 0) {

@@ -262,6 +262,8 @@ export interface EmbedBlock {
   hosting_tier?: string;
   /** Path under the app host the platform iframes. */
   block_path: string;
+  /** Path under the app host the platform calls (signed) for the media ids a block instance uses. */
+  media_path?: string;
   /** Subset of [identity, resize, navigate, error]. */
   capabilities?: string[];
   /** Platform scopes required (usually empty for storefront-only blocks). */
@@ -434,6 +436,7 @@ const EmbedBlockSchema = z.object({
   icon: z.string().max(60).optional(),
   hosting_tier: z.enum(['remote', 'trusted']).default('remote'),
   block_path: z.string().min(1),
+  media_path: z.string().regex(/^\//, 'media_path must start with /').optional(),
   capabilities: z.array(z.string().min(1)).default([]),
   scopes: z.array(z.string().regex(SCOPE_RE)).default([]),
   schema_version: z.number().int().min(1).default(1),
