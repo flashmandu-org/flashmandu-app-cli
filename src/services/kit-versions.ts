@@ -6,5 +6,5 @@
  */
 export const PINNED_KITS: Record<string, string> = {
   '@flashmandu/app-bridge': '0.6.2',
-  '@flashmandu/app-bridge-ui': '0.6.0',
+  '@flashmandu/app-bridge-ui': '0.7.0',
 };

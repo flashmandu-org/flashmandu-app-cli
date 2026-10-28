@@ -13,7 +13,7 @@
     "@aws-sdk/client-s3": "^3.1110.0",
     "@aws-sdk/s3-request-presigner": "^3.1110.0",
     "@flashmandu/app-bridge": "file:vendor/flashmandu-app-bridge-0.6.2.tgz",
-    "@flashmandu/app-bridge-ui": "file:vendor/flashmandu-app-bridge-ui-0.6.0.tgz",
+    "@flashmandu/app-bridge-ui": "file:vendor/flashmandu-app-bridge-ui-0.7.0.tgz",
     "next": "^14.2.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
